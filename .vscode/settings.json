@@ -1,0 +1,33 @@
+{
+    "python.defaultInterpreterPath": "${workspaceFolder}/.venv",
+    "python.envFile": "${workspaceFolder}/.env",
+    "python.terminal.useEnvFile": true,
+    "python.terminal.activateEnvironment": true,
+    "python-envs.terminal.autoActivationType": "shellIntegration",
+    "terminal.integrated.profiles.osx": {
+        "zsh-venv": {
+            "path": "zsh",
+            "args": ["-c", "source ${workspaceFolder}/.venv/bin/activate && exec zsh"]
+        }
+    },
+    "terminal.integrated.defaultProfile.osx": "zsh-venv",
+    "python.analysis.extraPaths": ["${workspaceFolder}"],
+    "python.analysis.typeCheckingMode": "off",
+    "pylance.insidersChannel": "off",
+    "terminal.integrated.env.osx": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "CONDA_AUTO_ACTIVATE_BASE": "false",
+        "VIRTUAL_ENV": "${workspaceFolder}/.venv",
+        "PATH": "${workspaceFolder}/.venv/bin:${env:PATH}"
+    },
+    "terminal.integrated.env.windows": {
+        "PYTHONPATH": "${workspaceFolder}",
+        "CONDA_AUTO_ACTIVATE_BASE": "false"
+    },
+    "python.testing.pytestEnabled": true,
+    "python.testing.pytestArgs": [
+        "tests"
+    ],
+    "makefile.configureOnOpen": false,
+    "json.schemaDownload.enable": false
+}

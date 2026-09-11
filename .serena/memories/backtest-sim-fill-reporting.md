@@ -1,0 +1,4 @@
+- Backtests intentionally still write simulated fills to the normal `logs/sim/sim_trades_YYYYMMDD.*` ledger when `SIM_ENABLED=true`.
+- `exec.backtest.SymbolBacktestResult` captures per-symbol sim fill deltas from the in-memory `SimulationEngine` logger and prints `TRADES`, `P&L`, `P&L%`, and `W/L` in the backtest summary.
+- Backtest CLI trade output must pair BUY/SELL fills and include buy timestamp, sell timestamp, setup timeframe, and setup pullback timestamp; do not print sell-only rows that discard setup metadata.
+- Focused coverage: `tests/test_files/test_backtest.py::test_backtest_summary_prints_sim_trade_results` and `test_backtest_replay_result_counts_sim_fills_logged_during_symbol`.

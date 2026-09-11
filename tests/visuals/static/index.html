@@ -1,0 +1,95 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Momo Visuals</title>
+  <script>
+    // Restore the saved theme before first paint to avoid a flash. A ?theme=
+    // query param overrides and persists (handy for shared links).
+    try {
+      var themeParam = new URLSearchParams(location.search).get('theme');
+      if (themeParam === 'light' || themeParam === 'dark') {
+        localStorage.setItem('momoVisuals.theme', themeParam);
+      }
+      if (localStorage.getItem('momoVisuals.theme') === 'light') {
+        document.documentElement.dataset.theme = 'light';
+      }
+    } catch (error) {}
+  </script>
+  <link rel="stylesheet" href="/static/css/theme.css" />
+  <link rel="stylesheet" href="/static/css/layout.css" />
+  <script src="/static/vendor/lightweight-charts-4.2.3.standalone.production.js"></script>
+</head>
+<body>
+  <div id="app">
+    <header id="topbar">
+      <div class="brand">Momo <span>Visuals</span></div>
+      <nav id="tabs">
+        <button type="button" data-view="leaderboard">Leaderboard</button>
+        <button type="button" data-view="charts">Charts</button>
+        <button type="button" data-view="replay">Replay</button>
+      </nav>
+      <div id="context" class="meta"></div>
+      <div id="status"></div>
+      <button type="button" id="themeToggle" title="Toggle light/dark mode">&#9789;</button>
+      <div id="busyBar" class="busy-bar" hidden><span></span></div>
+    </header>
+
+    <aside id="sidebar">
+      <div class="side-section">
+        <label>Date <input id="date" type="date" /></label>
+        <label>Session <select id="session">
+          <option value="premarket" selected>Premarket</option>
+          <option value="regular">Regular Session</option>
+          <option value="after_hours">After Hours</option>
+          <option value="1day">1 Day</option>
+        </select></label>
+        <label>Sort <select id="defaultTickerSort">
+          <option value="pctGain">Top gainers</option>
+          <option value="volume">Volume</option>
+        </select></label>
+      </div>
+      <div class="side-section side-tickers">
+        <div class="side-head">
+          <span>Tickers</span>
+          <span class="side-legend" title="cached data: T = tick tape, B = L2 book"><i class="dot t"></i>T <i class="dot b"></i>B</span>
+        </div>
+        <div id="sideTickers" class="side-ticker-list"><div class="loading-panel mini"><span class="spinner"></span></div></div>
+      </div>
+      <button id="collapseSide" type="button" title="Collapse sidebar">&#171;</button>
+    </aside>
+
+    <main id="content">
+      <section id="view-leaderboard" class="view">
+        <div class="loading-panel"><span class="spinner"></span><span class="loading-label">Loading tickers…</span></div>
+      </section>
+
+      <section id="view-charts" class="view" hidden>
+        <form id="controls" class="toolbar">
+          <label class="ticker-control">Ticker <input id="symbol" placeholder="CELZ" autocomplete="off" list="tickerQuickPick" /><datalist id="tickerQuickPick"></datalist></label>
+          <label>Timeframe <select id="timeframe">
+            <option value="all">All</option>
+            <option value="10s">10s</option>
+            <option value="1m">1m</option>
+            <option value="2m">2m</option>
+            <option value="5m">5m</option>
+          </select></label>
+          <label>Start <input id="start" size="5" /><span class="tz-chip" data-tz></span></label>
+          <label>End <input id="end" size="5" /><span class="tz-chip" data-tz></span></label>
+          <label class="check"><input id="moveStart" type="checkbox" /> clip to move start</label>
+          <label class="check"><input id="allowFetch" type="checkbox" /> allow new polling</label>
+          <button type="submit" class="primary">Load</button>
+          <button type="button" id="replayWindowBtn" title="Play this window back live">&#9654; Replay</button>
+        </form>
+        <div id="charts"></div>
+      </section>
+
+      <section id="view-replay" class="view" hidden>
+        <div id="replayRoot"><div class="empty">Replay view arrives with the replay engine.</div></div>
+      </section>
+    </main>
+  </div>
+  <script type="module" src="/static/js/main.js"></script>
+</body>
+</html>

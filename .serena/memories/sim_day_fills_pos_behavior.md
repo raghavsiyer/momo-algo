@@ -1,0 +1,3 @@
+- `pos` must not rely only on `SimulationEngine.get_logger()` because it is `None` after a fresh launch until sim activity creates the logger.
+- Use a file-backed `SimTradeLogger().day_fills(MarketClock.today().strftime("%Y%m%d"))` fallback to show full day trades after restart.
+- `SimTradeLogger._open_csv` upgrades legacy sim CSV headers before appending so newer setup/tape columns remain readable.

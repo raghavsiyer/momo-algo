@@ -1,0 +1,11 @@
+# Visualizer tape indicator overlays
+
+- `tests/visuals/charts.py` loads 10s tape indicators from existing `logs/tape_<YYYYMMDD>.csv` snapshots via `_load_confidence_series`.
+- Chart fields: `pressure_acceleration` -> `tape_acceleration` (blank until `pressure_acceleration_ready`), `trade_imbalance` -> `tape_imbalance`, `tape_pps` (fallback `entry_speed`) -> `tape_speed`.
+- Main 10s candle chart stays on normal second timestamps (`timeMultiplier: 1`) with no dense `timeSpine`; otherwise candles shrink because `fitContent()` includes quarter-second slots.
+- Do not render quarter-second tape panes as separate Lightweight Charts time scales; even one-way range conversion can leave residual jitter/misalignment because chart instances have different logical spacing.
+- The three tape panes render as canvas panes. They draw raw quarter-second tape points by interpolating x coordinates from the main candle chart's `timeScale().timeToCoordinate()` at surrounding 10s candle anchors. This makes the main candle chart the only x-axis authority.
+- Canvas tape panes draw passive axis/grid lines from main-chart coordinates. Major ticks stay on globally anchored candle indices using stable steps (1, 2, 4, 8, ...), never “every Nth visible candle” from the current viewport start because that makes grid lines slide during pan/zoom. Minor subdivisions are interpolated between adjacent candle anchors when zoomed in enough, capped by visible spacing and quarter-second granularity. Do not restore labels by creating another Lightweight Charts pane/time scale.
+- Canvas tape panes must draw their own passive right y-axis labels/grid, because there is no Lightweight Charts price scale in that path. Histogram tape panes such as tape imbalance should render filled bars sized from visible point spacing, not 2px vertical strokes.
+- Normal unscaled indicator panes still use Lightweight Charts and the original logical-range sync. 1m/2m/5m retain default Lightweight Charts time behavior.
+- If `logs/chart_cache/timesales_*.csv` is absent, quarter-second charting reflects cached tape snapshot timing only; it does not synthesize missing raw prints.

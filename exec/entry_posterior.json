@@ -1,0 +1,105 @@
+{
+ "version": 1,
+ "features": [
+  "log1p_speed",
+  "ratio",
+  "volimb",
+  "accelz",
+  "accel_ready",
+  "log1p_activity",
+  "ofi_ema10",
+  "depth_active",
+  "rel_level_pct",
+  "progress_pct",
+  "progress_ready",
+  "armed_speed",
+  "armed_ratio",
+  "armed_volimb",
+  "armed_ofi"
+ ],
+ "mean": [
+  2.145574235455458,
+  0.5349351547677144,
+  -0.0032927955765164325,
+  -0.6131880522578194,
+  0.9717569252452973,
+  5.45790694233908,
+  0.11329887786631918,
+  0.6654740608228981,
+  -1.591204044018001,
+  0.5913003198352013,
+  0.9992410690085108,
+  0.7739469832493089,
+  0.9429717569252453,
+  0.8965143383748035,
+  0.6416219439475254
+ ],
+ "scale": [
+  1.1973949222787166,
+  0.26843609190717577,
+  0.4253810632354493,
+  1.6974844702959333,
+  0.16566654304082867,
+  1.246231357349496,
+  0.7226256901453488,
+  0.47182447498488067,
+  0.44426022156700196,
+  1.7167392285708531,
+  0.027538246408209382,
+  0.4182738939601205,
+  0.23189657730673358,
+  0.3045921526618581,
+  0.47952395664090997
+ ],
+ "coef": [
+  0.3325828997000585,
+  0.34906347663974585,
+  0.07386557251825447,
+  0.05222767942177714,
+  -0.1261966453688615,
+  -0.06130251215001892,
+  0.06926426682105012,
+  -0.05324911060899503,
+  0.08540734606757,
+  -0.05263325698402195,
+  0.0251927311310102,
+  0.043722020728415176,
+  0.03334253817713304,
+  -0.023210191096112907,
+  0.11396033120214843
+ ],
+ "intercept": -1.9589142405084519,
+ "threshold": 0.2883,
+ "meta": {
+  "created": "2026-08-24T01:20:30+00:00",
+  "dataset": "logs\\research\\level_approach_labels.csv",
+  "corpus_dates": [
+   "20260727",
+   "20260806"
+  ],
+  "n_events": 18447,
+  "n_deployed": 16462,
+  "base_rate": 0.1387,
+  "lambda": 10.0,
+  "cv": {
+   "scheme": "leave-one-date-out",
+   "folds": 7,
+   "oof_auc": 0.6653,
+   "oof_logloss": 0.3848,
+   "base_logloss": 0.4025
+  },
+  "ev": {
+   "cost_roundtrip": 0.005,
+   "payoff": "pnl_exit (production exit-stack walk, relabel_exit_payoff.py)",
+   "best_theta_by_cost": {
+    "0.002": 0.4177,
+    "0.005": 0.4177,
+    "0.01": 0.4177
+   },
+   "ev_degenerate": true,
+   "threshold_criterion": "calibration plateau (EV rule degenerate): max OOF P(up) with take >= 5%"
+  },
+  "label": "exit-stack pnl >= 0.5% (production exits)",
+  "notes": "Fitted at band re-entry instants; live scoring reads every in-band tick \u2014 PnL truth comes from replay A/B, not OOF EV."
+ }
+}

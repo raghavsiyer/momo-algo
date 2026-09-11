@@ -1,0 +1,77 @@
+/* Single source of truth for every color in the app.
+   JS reads these via getComputedStyle (see js/theme.js) so canvas and
+   Lightweight Charts stay in lockstep with the stylesheet.
+   Dark is the default; [data-theme="light"] overrides the surface tokens
+   (market colors — up/down/overlays — stay identical across themes). */
+:root {
+  --bg: #0f1117;
+  --panel: #131722;
+  --grid: #2a2e39;
+  --text: #c9d1d9;
+  --muted: #8b949e;
+  --accent: #f5c542;
+
+  --up: #26a69a;
+  --down: #ef5350;
+  --flat: #b0bec5;
+  --polled: #7d8590;
+
+  --vwap: #f5c542;
+  --ema9: #2d7ff9;
+  --ema20: #ff8f00;
+  --ma50: #b388ff;
+  --bb: #90a4ae;
+
+  --buy-marker: #22c55e;
+  --sell-marker: #f87171;
+  --baseline: #f5c542;
+  --criteria: #22c55e;
+  --warn: #eab308;
+
+  --confidence-pa: #34d399;
+  --tape-accel: #f59e0b;
+  --tape-imb-up: #38bdf8;
+  --tape-imb-down: #fb7185;
+  --tape-speed: #c084fc;
+
+  --crosshair: #758696;
+  --crosshair-label-bg: #4c525e;
+  --error: #ffab91;
+
+  --input-bg: #0f141f;
+  --panel-translucent: rgba(19, 23, 34, 0.96);
+  --readout-bg: rgba(19, 23, 34, 0.74);
+  --readout-border: rgba(42, 46, 57, 0.72);
+  --header-bg: rgba(15, 17, 23, 0.96);
+  --row-border: rgba(42, 46, 57, 0.7);
+  --accent-hover: rgba(245, 197, 66, 0.08);
+  --accent-selected: rgba(245, 197, 66, 0.16);
+  --accent-selected-hover: rgba(245, 197, 66, 0.22);
+}
+
+:root[data-theme="light"] {
+  --bg: #eef1f5;
+  --panel: #ffffff;
+  --grid: #d7dde5;
+  --text: #1c2430;
+  --muted: #5f6b7a;
+
+  --flat: #64748b;
+  --polled: #8a94a3;
+
+  --warn: #ca8a04;
+  --error: #b91c1c;
+
+  --crosshair: #9aa4b2;
+  --crosshair-label-bg: #64748b;
+
+  --input-bg: #f4f6f9;
+  --panel-translucent: rgba(255, 255, 255, 0.97);
+  --readout-bg: rgba(255, 255, 255, 0.85);
+  --readout-border: rgba(28, 36, 48, 0.14);
+  --header-bg: rgba(255, 255, 255, 0.95);
+  --row-border: rgba(28, 36, 48, 0.1);
+  --accent-hover: rgba(203, 161, 53, 0.12);
+  --accent-selected: rgba(203, 161, 53, 0.22);
+  --accent-selected-hover: rgba(203, 161, 53, 0.3);
+}

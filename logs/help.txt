@@ -1,0 +1,108 @@
+╔══════════════════════════════════════════════════════════════╗
+║                        COMMAND REFERENCE                     ║
+╚══════════════════════════════════════════════════════════════╝
+
+  GENERAL
+  ─────────────────────────────────────────────────────────────
+  list              Show current watchlist with scores
+  cache             List all cached tickers
+  clear             Wipe the ticker cache (memory + disk)
+  rank              Toggle live rank display (scorers sorted by confidence)
+  top [N]           Toggle live IBKR top-gainers display, default 10 (top 20 = 20 rows)
+  weights           Print scoring weight breakdown table
+  setup / setups    Show logged setup signals + approval status
+  pos / positions   Show open sim positions + session P&L
+  pos full          Show all trades to date, grouped by date (oldest first)
+  conf              Show confidence gate status (eval + live)
+  conf stop / off   Bypass both confidence gates (still displayed, not enforced)
+  conf go / on      Re-enable all confidence gates (clears scoped bypasses too)
+  conf eval off/on  Bypass / re-enable only the eval_confidence gate
+  conf live off/on  Bypass / re-enable only the live_confidence gate
+  <TICKER> tape [N] Live T&S tape for a streaming ticker (see ORDER FLOW)
+  <TICKER> ofi [N]  Live order book + OFI for a streaming ticker
+  help              Print this page
+  q / quit          Close open displays, or shutdown if none open
+  exit              Shutdown immediately
+
+  MOMO SCANNER
+  ─────────────────────────────────────────────────────────────
+  momo stop         Pause momo polling + disable float/news data
+  momo go           Resume momo polling
+  momo start        Alias for momo go
+  momo poll              Force an immediate poll (scanner must be running)
+  momo interval          Show current poll interval
+  momo fast              Set poll interval to 2s (can be changed in config)
+  momo def               Set poll interval to 5s (default, can be changed in config)
+  momo slow              Set poll interval to 15s (can be changed in config)
+  momo interval <secs>   Set a custom poll interval in seconds
+
+  IBKR SCANNER
+  ─────────────────────────────────────────────────────────────
+  top [N]                Live view of the top N gainers, default 10 (q to close)
+  ibkr stop              Pause IBKR top-gainers scanning
+  ibkr go                Resume IBKR scanning
+  ibkr start             Alias for ibkr go
+  ibkr poll              Force an immediate scan (scanner must be running)
+  ibkr interval          Show current poll interval
+  ibkr fast              Set poll interval to 3s (default, can be changed in config)
+  ibkr def               Set poll interval to 30s (can be changed in config)
+  ibkr slow              Set poll interval to 60s (can be changed in config)
+  ibkr interval <secs>   Set a custom poll interval in seconds
+
+  YOUTUBE SCANNER
+  ─────────────────────────────────────────────────────────────
+  yt stop                Pause YouTube chat polling
+  yt go                  Resume YouTube chat polling
+  yt start               Alias for yt go
+  yt poll                Force an immediate poll (scanner must be running)
+  yt interval            Show current poll interval (mode + value)
+  yt fast                Set poll interval to 5s (fixed)
+  yt def                 Set poll interval to 20s (fixed, default)
+  yt slow                Set poll interval to 60s (fixed)
+  yt auto                Use server-recommended interval (default behavior)
+  yt interval <secs>     Set a custom fixed poll interval in seconds
+
+  ORDER FLOW  (live — ticker must already be streaming)
+  ─────────────────────────────────────────────────────────────
+  <TICKER> tape [N]      Live T&S tape, newest first — every print in the
+                         rolling window by default, N caps the rows. Green =
+                         buyer lifted / red = seller hit, plus every tape
+                         var + entry gate the algo computes from it
+  <TICKER> ofi [N]       Live order book (L2 ladder, or L1 when no depth line
+                         is attached) — every streamed level by default, N
+                         caps it — plus the OFI reads
+                         (command-first order still works: tape/ofi <TICKER>)
+
+  TRADIER PROVIDER
+  ─────────────────────────────────────────────────────────────
+  tradier           Show Tradier state (running / paused)
+  tradier stop      Pause all Tradier REST polls + live streaming
+  tradier go        Resume Tradier REST polls + live streaming
+  tradier start     Alias for tradier go
+
+  TICKER DISPLAY
+  ─────────────────────────────────────────────────────────────
+  <TICKER> stop     Mute scanner output for this ticker
+  <TICKER> go       Unmute scanner output for this ticker
+
+  TICKER LOOKUP
+  ─────────────────────────────────────────────────────────────
+  <TICKER>          Run full evaluation pipeline on a symbol
+                    (checks cache first, then fetches live data)
+  <TICKER> refresh / -r    Force a fresh evaluation (skips cache)
+  <TICKER> cache           Show cached evaluation for a ticker
+  <TICKER> clear           Clear the cache for this ticker
+  <TICKER> find            Show when the ticker was first found
+  <TICKER> setup / setups  Show logged setup signals for this ticker
+  <TICKER> weights / -w    Live-updating scoring variable display
+  <TICKER> levels / -l     Show resistance/support map for a ticker
+  <TICKER> split / -s      Show reverse split history
+  <TICKER> live / -v       Live detail view (candles + scoring; falls back to historical)
+  <TICKER> live <range>    Filter detail rows by PT range (e.g. 12-16 or 12:10-16:05)
+  <TICKER> live full       Full premarket detail, ranked worst-first with no row cap
+  <TICKER> noise           Mark current headline as noise, find another
+  <TICKER> float / -f <val>      Override float (e.g. 5.2M or 123.4k)
+  <TICKER> news / -n "<text>"    Set a manual news headline (auto-scored with FinBERT)
+  <TICKER> news / -n <num (between -1 & 1)>    Override sentiment score
+
+  Visit config to modify behavior

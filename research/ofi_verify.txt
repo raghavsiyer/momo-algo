@@ -1,0 +1,18 @@
+=== ENTRY: coverage by leg-gain tier + added-delay tail ===
+   norm30>=1.0 (current)  4-6%:74/350  6-10%:148/274  >10%:111/148  +dly p50/p75/p90 = 0.0/13.0/44.3s
+             norm15>=0.9  4-6%:85/350  6-10%:149/274  >10%:114/148  +dly p50/p75/p90 = 0.0/8.6/37.9s
+              ema10>=0.7  4-6%:83/350  6-10%:152/274  >10%:112/148  +dly p50/p75/p90 = 0.0/9.5/36.6s
+               ema5>=0.5  4-6%:103/350  6-10%:160/274  >10%:112/148  +dly p50/p75/p90 = 0.0/4.3/32.5s
+
+=== ENTRY: per-day paired coverage & noise vs current ===
+             norm15>=0.9  cov delta: sum +15 (days better 12, worse 5)  noise delta: sum +11 (days better 6, worse 12)
+              ema10>=0.7  cov delta: sum +14 (days better 13, worse 5)  noise delta: sum -4 (days better 9, worse 9)
+               ema5>=0.5  cov delta: sum +42 (days better 20, worse 2)  noise delta: sum +40 (days better 5, worse 17)
+
+=== EXIT: premature & capture on big legs (gain >= 6%) ===
+entered big legs: 259
+   norm30<-0.6 (current)  premat  30.5%  capt med  1.27%  mean  2.58%  p10  -1.05%
+             norm30<-1.0  premat  25.1%  capt med  1.46%  mean  2.78%  p10  -1.28%
+             ema10<-0.75  premat  28.2%  capt med  1.49%  mean  2.50%  p10  -1.16%
+       ema10<-0.75&r<=.5  premat  23.6%  capt med  1.74%  mean  2.79%  p10  -1.39%
+        ema10<-0.6&r<=.5  premat  29.0%  capt med  1.49%  mean  2.66%  p10  -1.06%

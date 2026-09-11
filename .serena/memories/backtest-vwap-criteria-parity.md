@@ -1,0 +1,4 @@
+- Backtest replay must reset cached `WatchlistEntry.criteria_groups` before replay; otherwise stale attention/execution gates from the cache snapshot can appear in setup diagnostics.
+- Live VWAP slope gate uses `DynamicScorer._vwap_closed_history` / `_stream_vwap`, seeded in live by full-session 1m candles. Backtest now seeds the same stream VWAP history from cached pre-start 1m session candles via `_seed_replay_stream_vwap`.
+- Backtest `_refresh_ta_from_ticks` now calls `_update_criteria_and_hidden_seller(..., include_hidden_seller=False)` after replay HOD/ATR update so attention gates (including vwap_slope_positive and close_above_vwap) refresh during replay.
+- Focused coverage: `tests/test_files/test_backtest.py` VWAP/criteria replay tests.
