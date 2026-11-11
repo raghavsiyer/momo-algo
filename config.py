@@ -165,6 +165,18 @@ IBKR_L2_ROWS:           int  = int(os.getenv("IBKR_L2_ROWS", "10"))
 # Max concurrent market-depth (L2) subscriptions. IBKR grants 3 depth lines
 # by default; extra symbols degrade gracefully to L1-only order flow.
 IBKR_L2_MAX_DEPTH_SUBS: int  = int(os.getenv("IBKR_L2_MAX_DEPTH_SUBS", "3"))
+# Venues IBKR's smart depth leaves out on this account: its Error 2152 lists
+# ARCA, BEX (Nasdaq BX) and NYSE under "Need additional market data
+# permissions", and ARCA's own book is refused (354). Each venue's top of book
+# still comes through reqMktData with the exchange set, so every depth line also
+# carries one directed quote per venue, summed into the ladder like a depth row.
+# Costs one market-data line per venue per depth symbol, no depth line.
+# Measured 2026-11-09 (OMH, 90s premarket, paper): the smart book's best matched
+# the NBBO 54% (bid) / 34% (ask) of the time alone, 95% / 96% with these rows —
+# ARCA was often the only venue at the inside. Set empty to turn off.
+IBKR_L2_VENUE_QUOTES: tuple[str, ...] = tuple(
+    v.strip() for v in os.getenv("IBKR_L2_VENUE_QUOTES", "ARCA,NYSE,BEX").split(",") if v.strip()
+)
 # Max concurrent tick-by-tick (T&S tape) subscriptions. Measured at exactly 5
 # on this account (2026-08-04, tests/test_files/tick_subs_probe.py) — NOT the
 # depth-formula number (3) the IBKR docs suggest; the tape and depth quotas

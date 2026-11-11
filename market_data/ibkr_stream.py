@@ -30,6 +30,7 @@ Usage:
 """
 
 import asyncio
+import copy
 import logging
 import math
 import queue
@@ -221,6 +222,7 @@ from config import (
     IBKR_ENABLED,
     IBKR_L2_ROWS,
     IBKR_L2_MAX_DEPTH_SUBS,
+    IBKR_L2_VENUE_QUOTES,
     IBKR_MAX_TICK_SUBS,
     IBKR_TICK_RESUB_COOLDOWN_SECS,
     IBKR_SUB_DENIAL_BACKOFF_SECS,
@@ -304,6 +306,34 @@ def _aggregate_dom(rows: list, descending: bool) -> list[tuple[float, int]]:
     return sorted(by_price.items(), key=lambda kv: kv[0], reverse=descending)
 
 
+def _has_rows(rows: list) -> bool:
+    """True when *rows* holds at least one real (priced, sized) DOM row."""
+    return any(_ns(getattr(r, "price", 0.0)) > 0 and _ni(getattr(r, "size", 0)) > 0 for r in rows)
+
+
+def _with_venue_rows(rows: list, venue_rows: list) -> list:
+    """Smart-depth *rows* plus each venue's top-of-book row (IBKR_L2_VENUE_QUOTES).
+
+    A venue the smart book already carries is skipped, so the rows can't count
+    twice if the account later gains that venue's full book.
+    """
+    if not venue_rows:
+        return rows
+    in_book = {getattr(r, "marketMaker", "") for r in rows}
+    return list(rows) + [v for v in venue_rows if v.marketMaker not in in_book]
+
+
+def _directed_contract(contract: object, venue: str) -> object:
+    """A copy of *contract* routed to one exchange, for that venue's own quote.
+
+    A copy, never the original: ib_insync keys tickers by contract object, so
+    reusing the SMART contract would hand back the symbol's L1/depth ticker.
+    """
+    directed = copy.copy(contract)
+    directed.exchange = venue
+    return directed
+
+
 # ---------------------------------------------------------------------------
 # NaN helpers
 # ---------------------------------------------------------------------------
@@ -369,6 +399,10 @@ class IBKRSharedStream:
         self._depth_tickers: dict[str, object] = {}   # symbol -> reqMktDepth Ticker
         self._depth_lru: list[str] = []               # grant order, oldest first
         self._prev_book_sig: dict[str, tuple] = {}
+        # Directed top-of-book quotes for the venues smart depth leaves out
+        # (IBKR_L2_VENUE_QUOTES), held exactly as long as the depth line.
+        self._venue_quotes: dict[str, list[tuple[str, object, object]]] = {}  # sym -> [(venue, contract, ticker)]
+        self._prev_venue_sig: dict[str, tuple] = {}
         self._depth_idle_since: dict[str, float] = {} # unpinned+quiet since (idle release)
         # Tape (tick-by-tick) subs carry their own quota, the same size as
         # the depth one. Allocated by (pin, L1 volume rate); the cap can be
@@ -612,9 +646,25 @@ class IBKRSharedStream:
 
     def _dispatch_depth(self) -> None:
         for sym, ticker in list(self._depth_tickers.items()):
-            for ts, raw_bids, raw_asks in self._pending_book_states(ticker):
-                bids = _aggregate_dom(raw_bids, descending=True)
-                asks = _aggregate_dom(raw_asks, descending=False)
+            venue_bids, venue_asks = self._venue_rows(sym)
+            venue_sig = (tuple(venue_bids), tuple(venue_asks))
+            states = self._pending_book_states(ticker)
+            if not states and venue_sig != self._prev_venue_sig.get(sym, ((), ())):
+                # A venue's quote moved with no depth update: the ladder still
+                # changed, so it goes out once more against the current book.
+                states = [(None,
+                           getattr(ticker, "domBids", None) or [],
+                           getattr(ticker, "domAsks", None) or [])]
+            self._prev_venue_sig[sym] = venue_sig
+            for ts, raw_bids, raw_asks in states:
+                # Venue rows never stand in for a book IBKR hasn't sent yet:
+                # alone they'd pass for the whole market.
+                if not _has_rows(raw_bids) and not _has_rows(raw_asks):
+                    continue
+                # Venue quotes are as of this pass; buffered states can be up to
+                # one loop iteration older. Both feeds tick far slower than that.
+                bids = _aggregate_dom(_with_venue_rows(raw_bids, venue_bids), descending=True)
+                asks = _aggregate_dom(_with_venue_rows(raw_asks, venue_asks), descending=False)
                 if not bids and not asks:
                     continue
                 sig = (tuple(bids), tuple(asks))
@@ -641,6 +691,26 @@ class IBKRSharedStream:
                 for _, _, on_book in cbs.values():
                     if on_book is not None:
                         on_book(snapshot)
+
+    def _venue_rows(self, symbol: str) -> tuple[list, list]:
+        """Each directed venue quote as one bid row and one ask row.
+
+        A side with no market (IBKR's -1, NaN before the first tick, or no
+        size) gives no row; a refused request (354, line limit) never ticks
+        and so never gives one either.
+        """
+        bids: list = []
+        asks: list = []
+        for venue, _, ticker in self._venue_quotes.get(symbol, ()):
+            bid = _ns(getattr(ticker, "bid", 0.0))
+            ask = _ns(getattr(ticker, "ask", 0.0))
+            bid_size = _ni(getattr(ticker, "bidSize", 0))
+            ask_size = _ni(getattr(ticker, "askSize", 0))
+            if bid > 0 and bid_size > 0:
+                bids.append(_DOMLevel(bid, bid_size, venue))
+            if ask > 0 and ask_size > 0:
+                asks.append(_DOMLevel(ask, ask_size, venue))
+        return bids, asks
 
     @staticmethod
     def _pending_book_states(ticker: object) -> list[tuple]:
@@ -1213,13 +1283,38 @@ class IBKRSharedStream:
             logger.debug("IBKRSharedStream: depth subscribed %s", symbol)
         except Exception as exc:
             logger.warning("IBKRSharedStream: depth subscribe %s failed: %s", symbol, exc)
+            return
+        self._start_venue_quotes(ib, symbol, contract)
+
+    def _start_venue_quotes(self, ib: object, symbol: str, contract: object) -> None:
+        """Directed quotes for IBKR_L2_VENUE_QUOTES, alongside *symbol*'s depth line.
+
+        These ride on the depth line's lifetime: started with it, cancelled by
+        _stop_depth, so a 309-reaped or evicted book takes them down too.
+        """
+        if symbol in self._venue_quotes:
+            return
+        quotes: list[tuple[str, object, object]] = []
+        for venue in IBKR_L2_VENUE_QUOTES:
+            try:
+                directed = _directed_contract(contract, venue)
+                quotes.append((venue, directed, ib.reqMktData(directed, "", snapshot=False)))
+            except Exception as exc:
+                logger.warning("IBKRSharedStream: [%s] %s quote for depth failed: %s", symbol, venue, exc)
+        self._venue_quotes[symbol] = quotes
 
     def _stop_depth(self, ib: object, symbol: str) -> None:
         ticker = self._depth_tickers.pop(symbol, None)
         self._prev_book_sig.pop(symbol, None)
+        self._prev_venue_sig.pop(symbol, None)
         self._depth_idle_since.pop(symbol, None)
         if symbol in self._depth_lru:
             self._depth_lru.remove(symbol)
+        for _, directed, _ in self._venue_quotes.pop(symbol, ()):
+            try:
+                ib.cancelMktData(directed)
+            except Exception:
+                pass
         if ticker is None:
             return
         try:
