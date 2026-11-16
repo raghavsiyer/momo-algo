@@ -212,3 +212,6 @@ logs/*
 !logs/help.txt
 .DS_Store
 .vscode/
+
+# Full text of a published paper, kept locally for reference only (Kolm, Turiel & Westray, cited in exec/order_flow.py)
+Deep_order_flow_imbalance_paper.txt
