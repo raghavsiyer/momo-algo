@@ -1966,6 +1966,7 @@ class BacktestRunner:
 			bid = price - spread / 2.0
 			ask = price + spread / 2.0
 
+		side = str(row.get("side", "") or "")
 		return LiveTimesale(
 			event_type="timesale",
 			symbol=symbol,
@@ -1980,6 +1981,9 @@ class BacktestRunner:
 			cancel=False,
 			correction=False,
 			session=str(row.get("session", "") or ""),
+			# The merged tape's live side, so replay counts the print as live did.
+			aggressor=side if side in ("buy", "sell", "mid") else None,
+			origin=str(row.get("origin", "") or ""),
 		)
 
 	def _load_cached_timesales(

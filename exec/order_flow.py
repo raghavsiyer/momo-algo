@@ -28,6 +28,9 @@ the Tradier stream and computes three real-time signals:
        price >= ask  →  buyer lifted offer  (buy volume)
        price <= bid  →  seller hit bid      (sell volume)
        otherwise     →  midpoint / crossed  (neutral)
+     A print from the merged tastytrade+IBKR tape arrives already sided
+     (``event.aggressor``, judged the same way against the NBBO and the last
+     800 ms of quotes) and that side is used as is.
      Rolling ratio over a configurable window.
 
 All three signals are exposed as properties and can be read by the
@@ -707,7 +710,12 @@ class OrderFlowTracker:
         """
         self._trade_count += 1
         self._touch_event_ts(event.ts)
-        side = self._classify(event.last, event.bid, event.ask)
+        # The merged tape (market_data/tape_merge.py) has already sided the
+        # print against the NBBO, allowing for a late quote; anything else is
+        # classified here from the bid/ask it carries.
+        side = getattr(event, "aggressor", None)
+        if side not in ("buy", "sell", "mid"):
+            side = self._classify(event.last, event.bid, event.ask)
 
         ct = ClassifiedTrade(
             ts=event.ts,

@@ -143,6 +143,11 @@ class LiveTimesale:
     cancel: bool                     # true if this print was cancelled
     correction: bool                 # true if this is a corrected print
     session: str                     # "normal" | "pre" | "post"
+    # Set by the merged tape (market_data/tape_merge.py); None/empty elsewhere,
+    # where consumers classify the print from bid/ask themselves.
+    aggressor: Optional[str] = None  # "buy" | "sell" | "mid": where it hit the NBBO
+    place: str = ""                  # above_ask | at_ask | between | at_bid | below_bid | unknown
+    origin: str = ""                 # "tastytrade" | "ibkr": which feed put it on the tape
 
 
 @dataclass

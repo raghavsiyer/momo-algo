@@ -58,6 +58,10 @@ RAW_TIMESALES_COLUMNS = (
     "flag",
     "session",
     "source",
+    # Merged-tape prints carry their side and feed so replays use what the
+    # live tape decided (empty for prints from before, or from IBKR alone).
+    "side",
+    "origin",
 )
 
 # L2 order book snapshots (IBKR depth). Ladders are JSON-encoded
@@ -433,7 +437,7 @@ def load_timesales_cache(
     if merged.empty:
         return _empty_timesales()
 
-    for column in ("exchange", "flag", "session", "source"):
+    for column in ("exchange", "flag", "session", "source", "side", "origin"):
         merged[column] = merged[column].fillna("").astype(str)
     merged["source"] = merged["source"].where(merged["source"].astype(bool), SOURCE_STREAM)
 
@@ -578,6 +582,8 @@ def timesale_row_from_event(event: Any, source: str = SOURCE_STREAM) -> dict[str
         "flag": str(getattr(event, "flag", "")),
         "session": str(getattr(event, "session", "")),
         "source": source,
+        "side": str(getattr(event, "aggressor", None) or ""),
+        "origin": str(getattr(event, "origin", "") or ""),
     }
 
 
@@ -609,14 +615,28 @@ def append_timesales(rows: Iterable[dict[str, Any]], log_dir: Path = LOG_DIR) ->
             continue
         path = timesales_cache_path(log_dir, symbol, ymd)
         exists = path.exists() and path.stat().st_size > 0
+        # A day file started under an older column set keeps its own header
+        # (new columns are dropped from its rows) so its CSV stays aligned.
+        fieldnames = _existing_header(path) if exists else None
         try:
             with path.open("a", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=RAW_TIMESALES_COLUMNS)
+                writer = csv.DictWriter(
+                    handle, fieldnames=fieldnames or RAW_TIMESALES_COLUMNS, extrasaction="ignore",
+                )
                 if not exists:
                     writer.writeheader()
                 writer.writerows(group)
         except OSError:
             continue
+
+
+def _existing_header(path: Path) -> list[str] | None:
+    try:
+        with path.open(newline="") as handle:
+            header = next(csv.reader(handle), None)
+    except OSError:
+        return None
+    return [col for col in header if col] if header else None
 
 
 def book_row_from_snapshot(snapshot: Any, source: str = SOURCE_STREAM) -> dict[str, Any]:
