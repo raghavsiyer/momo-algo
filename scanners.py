@@ -12,6 +12,8 @@ A shared consumer thread dequeues symbols and runs them through the
 evaluation pipeline.
 """
 
+from __future__ import annotations
+
 import logging
 import queue
 import re
