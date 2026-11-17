@@ -1859,6 +1859,11 @@ class DynamicScorer:
             closed_1m = self._tf_buf.last_closed_bar("1min")
             if closed_1m is not None:
                 c = float(closed_1m.close)
+                # Every MA timeframe (5m … monthly) advances its forming bar
+                # off the closed 1m bar and moves its levels in place.
+                update_mas = getattr(self._rmap, "update_moving_averages", None)
+                if update_mas is not None:
+                    update_mas(closed_1m.ts, c)
                 alpha9 = 2.0 / (9 + 1)
                 alpha20 = 2.0 / (20 + 1)
                 self._ema9_base = c if self._ema9_base is None else self._ema9_base + alpha9 * (c - self._ema9_base)
@@ -3581,9 +3586,14 @@ class DynamicScorer:
         Returns 0.0 if below and distance < 100%, 0.5 (neutral) if >= 100% away.
         Returns None if no 200 EMA/MA levels are found in the resistance map.
         """
+        # Daily 200s only: MOVING_AVERAGE levels by identity, or the legacy
+        # STRUCTURE "200 EMA (daily)" / "200 MA (daily)" rows of cached maps.
+        # Intraday 200s (e.g. "200 EMA (5m)") are not what this flag means.
         levels_200 = [
             l for l in self._rmap.all_levels()
-            if "200 EMA" in l.source or "200 MA" in l.source
+            if (getattr(l, "ma_period", None) == 200 and getattr(l, "timeframe", None) == "daily")
+            or (getattr(l, "ma_period", None) is None
+                and ("200 EMA" in l.source or "200 MA" in l.source))
         ]
         if not levels_200:
             return None

@@ -1006,6 +1006,16 @@ class BacktestRunner:
 				logger.warning("[backtest] add: %s — pipeline returned no result", sym)
 				continue
 
+			# The snapshot is pickled below; wait for the MA levels so they are
+			# on the map when it is. (They reflect bars as of now, not *day* —
+			# the same caveat as float and profile above.)
+			ma_levels = getattr(result, "ma_levels", None)
+			if ma_levels is not None:
+				try:
+					ma_levels.result(timeout=120)
+				except Exception as exc:
+					logger.warning("[backtest] add: %s — MA levels not marked: %s", sym, exc)
+
 			# We never want the live scorer to keep streaming — we only
 			# need the static evaluation + resistance map.
 			if result.scorer is not None:

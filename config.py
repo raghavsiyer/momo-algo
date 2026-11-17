@@ -494,6 +494,42 @@ SUB_1_KEY_LEVELS:      list  = [0.10, 0.25, 0.50, 0.75]  # key sub-$1 levels
 # MA/EMA levels treated as major resistance
 MAJOR_RESISTANCE_MAS: list = [50, 200]   # period lengths flagged as major resistance
 
+# --- Moving-average levels in the resistance/support map ---
+# Every (kind, period) below is marked on every timeframe below as its own
+# level (technical_analysis/moving_average_levels.py). Like every other level
+# in the map they feed the entry headroom gate and the resistance-approach
+# exit, so trimming a timeframe here also stops it gating trades.
+# Kinds: "ema" (exponential, seeded with the SMA of its first `period`
+# closes, as Pine's ta.ema does) or "sma" (simple).
+MA_LEVEL_SPECS: tuple[tuple[str, int], ...] = (
+    ("ema", EMA_200_PERIOD),
+    ("sma", MA_200_PERIOD),
+    ("sma", MA_50_PERIOD),
+)
+MA_LEVEL_TIMEFRAMES: tuple[str, ...] = (
+    "5m", "15m", "30m", "1h", "2h", "4h", "daily", "weekly", "monthly",
+)
+# Calendar days of history fetched per source interval. Sized for ~3x the
+# longest period on the timeframe each feeds (EMA warm-up: the seed's weight
+# falls to ~e^-4 after 2 more periods) on extended-hours bars (16h/day);
+# 2h/4h are built from the 1-hour fetch. Monthly asks for the most history
+# the provider has; most small caps simply have fewer than 200 months, and a
+# timeframe with fewer closed bars than a period leaves that MA unmarked.
+MA_LEVEL_FETCH_DAYS: dict[str, int] = {
+    "5min": 10,
+    "15min": 21,
+    "30min": 45,
+    "1hour": 220,
+    "1day": 1100,
+    "1week": 5500,
+    "1month": 11000,
+}
+# The pipeline waits at most this long for the MA fetch before printing the
+# summary and starting the scorer (the fetch starts at the float gate, so it
+# usually finishes during news/sentiment). Kept short because the scorer's
+# start waits on it; a slower fetch still marks its levels when it lands.
+MA_LEVEL_FETCH_WAIT_SECS: float = 3.0
+
 # =============================================================================
 # WATCHLIST
 # =============================================================================

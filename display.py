@@ -212,11 +212,14 @@ def _print_stock_summary(entry, rmap, fail_reasons: list[str] | None = None) -> 
             warnings.append(("Daily chart weak — no clean base", ""))
 
     # ── Resistance ────────────────────────────────────────────────────
-    # ── 200 EMA/MA resistance via resistance map ───────────────────────
+    # ── Moving-average resistance via resistance map ───────────────────
+    # MOVING_AVERAGE levels (200 EMA / 200 MA / 50 MA on every timeframe),
+    # plus the legacy STRUCTURE 200 rows of maps cached before them.
     ma200_above = [
         l for l in rmap.all_levels()
         if l.active and l.price > entry.price
-        and ("200 EMA" in l.source or "200 MA" in l.source)
+        and (l.level_type == LevelType.MOVING_AVERAGE
+             or "200 EMA" in l.source or "200 MA" in l.source)
     ]
     nearest_ma200 = min(ma200_above, key=lambda l: l.price) if ma200_above else None
     if nearest_ma200:
@@ -1518,6 +1521,7 @@ _LEVEL_TYPE_TAG = {
     LevelType.STRUCTURE: "structure",
     LevelType.DYNAMIC:   "dynamic",
     LevelType.TRENDLINE: "trendline",
+    LevelType.MOVING_AVERAGE: "ma",
 }
 
 
