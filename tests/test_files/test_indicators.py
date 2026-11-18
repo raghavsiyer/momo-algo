@@ -21,6 +21,7 @@ from technical_analysis.indicators import (
     add_vwap,
     add_bollinger_bands,
     add_macd,
+    _add_macd_ip,
     add_roc,
     add_rvol,
     compute_spread,
@@ -31,7 +32,7 @@ from technical_analysis.indicators import (
 from config import (
     EMA_9_PERIOD, EMA_20_PERIOD, EMA_200_PERIOD,
     BB_PERIOD, BB_STD,
-    MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    MACD_FAST, MACD_SLOW, MACD_SIGNAL, MACD_ATR_PERIOD,
     ROC_PERIOD,
 )
 
@@ -242,6 +243,74 @@ class TestMACD(unittest.TestCase):
     def test_flat_series_macd_zero(self):
         df = add_macd(_flat(60))
         self.assertTrue(np.allclose(df["macd_line"].values, 0.0, atol=1e-10))
+
+    # --- MACD-V (Spiroglou 2022): 100 * (EMA12 - EMA26) / Wilder ATR(26) ---
+
+    @staticmethod
+    def _walk(n: int = 200, scale: float = 1.0, seed: int = 7) -> pd.DataFrame:
+        rng = np.random.default_rng(seed)
+        close = 5.0 + np.cumsum(rng.normal(0.0, 0.03, n))
+        spread = np.abs(rng.normal(0.0, 0.02, n)) + 0.005
+        df = _ohlcv(n)
+        df["close"] = close * scale
+        df["open"] = np.r_[close[0], close[:-1]] * scale
+        df["high"] = (np.maximum(close, np.r_[close[0], close[:-1]]) + spread) * scale
+        df["low"] = (np.minimum(close, np.r_[close[0], close[:-1]]) - spread) * scale
+        return df
+
+    def test_macd_v_matches_the_published_formula(self):
+        df = self._walk()
+        out = add_macd(df)
+        close, high, low = df["close"].to_numpy(), df["high"].to_numpy(), df["low"].to_numpy()
+        # Wilder's ATR written out bar by bar, independent of the pandas version.
+        atr = np.empty(len(df))
+        for i in range(len(df)):
+            tr = high[i] - low[i] if i == 0 else max(high[i] - low[i], abs(high[i] - close[i - 1]), abs(low[i] - close[i - 1]))
+            atr[i] = tr if i == 0 else atr[i - 1] + (tr - atr[i - 1]) / MACD_ATR_PERIOD
+        ema_fast = df["close"].ewm(span=MACD_FAST, adjust=False).mean().to_numpy()
+        ema_slow = df["close"].ewm(span=MACD_SLOW, adjust=False).mean().to_numpy()
+        expected = 100.0 * (ema_fast - ema_slow) / atr
+        self.assertTrue(np.allclose(out["macd_line"].to_numpy(), expected, atol=1e-9))
+        expected_signal = pd.Series(expected).ewm(span=MACD_SIGNAL, adjust=False).mean().to_numpy()
+        self.assertTrue(np.allclose(out["macd_signal"].to_numpy(), expected_signal, atol=1e-9))
+
+    def test_macd_v_is_the_same_at_any_price_level(self):
+        # The point of MACD-V: a $0.50 and a $50 stock with the same shape read the same.
+        cheap = add_macd(self._walk(scale=0.1))
+        dear = add_macd(self._walk(scale=10.0))
+        self.assertTrue(np.allclose(cheap["macd_line"].to_numpy(), dear["macd_line"].to_numpy(), atol=1e-9))
+        self.assertTrue(np.allclose(cheap["macd_hist"].to_numpy(), dear["macd_hist"].to_numpy(), atol=1e-9))
+
+    def test_macd_v_shrinks_when_the_bars_are_wilder(self):
+        calm = self._walk()
+        wild = calm.copy()
+        wild["high"] = wild["high"] + 0.10
+        wild["low"] = wild["low"] - 0.10
+        calm_v = add_macd(calm)["macd_line"].abs().iloc[MACD_SLOW:]
+        wild_v = add_macd(wild)["macd_line"].abs().iloc[MACD_SLOW:]
+        self.assertTrue((wild_v < calm_v).all())
+
+    def test_macd_v_with_no_range_at_all_is_zero_not_nan(self):
+        df = _flat(40)
+        df["high"] = df["close"]
+        df["low"] = df["close"]
+        out = add_macd(df)
+        self.assertTrue(np.isfinite(out[["macd_line", "macd_signal", "macd_hist"]].to_numpy()).all())
+        self.assertTrue(np.allclose(out["macd_line"].to_numpy(), 0.0))
+
+    def test_macd_v_from_closes_alone_uses_close_to_close_range(self):
+        df = self._walk()[["ts", "close"]].copy()
+        out = add_macd(df)
+        self.assertTrue(np.isfinite(out["macd_line"].to_numpy()).all())
+        self.assertGreater(out["macd_line"].abs().max(), 0.0)
+
+    def test_in_place_and_copying_versions_agree(self):
+        df = self._walk()
+        copied = add_macd(df)
+        in_place = df.copy()
+        _add_macd_ip(in_place)
+        for col in ("macd_line", "macd_signal", "macd_hist"):
+            self.assertTrue(np.allclose(copied[col].to_numpy(), in_place[col].to_numpy()))
 
 
 # ---------------------------------------------------------------------------
