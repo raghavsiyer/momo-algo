@@ -288,6 +288,11 @@ SLOT_PIN_POSITION:   int = 3   # open (sim) position — exit logic needs data
 IBKR_TICK_MAX_REQUESTS_TRADES: int = int(os.getenv("IBKR_TICK_MAX_REQUESTS_TRADES", "24"))
 IBKR_TICK_MAX_REQUESTS_QUOTES: int = int(os.getenv("IBKR_TICK_MAX_REQUESTS_QUOTES", "8"))
 MARKET_DATA_ENABLED:    bool = TRADIER_ENABLED or IBKR_ENABLED
+# Float from stockanalysis.com through Firecrawl, first in the float chain
+# (market_data/firecrawl_float.py), sharing ~/.scalpfeed/float-cache.json with
+# the ScalpFeed Quantower connection. Key: apiKey in ~/.scalpfeed/firecrawl.json
+# or FIRECRAWL_API_KEY. 5 credits a lookup; a float is kept a week.
+FIRECRAWL_FLOAT_ENABLED: bool = os.getenv("FIRECRAWL_FLOAT_ENABLED", "true").lower() == "true"
 FMP_ENABLED:            bool = os.getenv("FMP_ENABLED", "true").lower() == "true"
 AV_ENABLED:             bool = os.getenv("AV_ENABLED", "true").lower() == "true"
 AV_NEWS_ENABLED:        bool = os.getenv("AV_NEWS_ENABLED", "false").lower() == "true"

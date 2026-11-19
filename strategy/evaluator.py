@@ -59,9 +59,10 @@ from market_data.finnhub_client import FinnhubClient, FinnhubNewsArticle
 from market_data.finbert_client import FinBERTClient
 from market_data.brave_client import BraveNewsClient
 from market_data.momo_client import MomoClient
+from market_data.firecrawl_float import FirecrawlFloatClient
 from config import (
     MARKET_DATA_ENABLED, AV_ENABLED, FINNHUB_ENABLED, FINBERT_ENABLED,
-    BRAVE_ENABLED, FMP_ENABLED,
+    BRAVE_ENABLED, FMP_ENABLED, FIRECRAWL_FLOAT_ENABLED,
     _dim,
     # Stage 1 thresholds
     PRICE_MIN, PRICE_MAX, CHANGE_PCT_MIN,
@@ -628,6 +629,7 @@ class StockEvaluator:
         self._tradier   = get_historical_client()
         self._av        = None if not AV_ENABLED else AlphaVantageClient()
         self._fmp       = None if not FMP_ENABLED else FMPClient()
+        self._firecrawl = FirecrawlFloatClient() if FIRECRAWL_FLOAT_ENABLED else None
         self._finnhub   = FinnhubClient()
         self._finbert   = FinBERTClient()
         self._brave     = BraveNewsClient()
@@ -1301,6 +1303,19 @@ class StockEvaluator:
                     free_float_pct=100.0,
                     source="cache",
                 )
+            # stockanalysis.com through Firecrawl first, from the cache shared
+            # with ScalpFeed when either has looked the symbol up this week.
+            # Since 2026-11-18 AV's OVERVIEW is premium on this key, FMP's
+            # shares-float covers large caps only, and Momo's livequote doesn't
+            # answer; they stay below as fallbacks.
+            if getattr(self, "_firecrawl", None) is not None:
+                try:
+                    fc_float = self._firecrawl.get_float(symbol)
+                except Exception as exc:
+                    logger.warning(f"[{symbol}] Firecrawl float error: {type(exc).__name__}")
+                    fc_float = None
+                if fc_float and fc_float.float_shares_m > 0:
+                    return fc_float
             if use_av_float:
                 result = self._av.get_float(symbol)
                 if result:

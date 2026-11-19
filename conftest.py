@@ -20,3 +20,7 @@ os.environ["TRADIER_STREAM_ENABLED"] = "false"
 # dev machine would otherwise let a test that runs the stream thread open a
 # live tastytrade DXLink socket. Tests drive the tape with fakes instead.
 os.environ["TASTYTRADE_TAPE_ENABLED"] = "false"
+# And for float: a key in ~/.scalpfeed/firecrawl.json would let an evaluator
+# test spend Firecrawl credits and write the shared float cache. The client's
+# own tests use a fake sender and a temporary cache.
+os.environ["FIRECRAWL_FLOAT_ENABLED"] = "false"
