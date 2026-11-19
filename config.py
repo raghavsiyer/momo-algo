@@ -478,10 +478,15 @@ VWAP_SESSION_RESET: bool = True   # reset VWAP at market open each day
 BB_PERIOD: int   = 20
 BB_STD:    float = 2.0
 
-# MACD (1-min and 5-min)
+# MACD-V (1-min and 5-min). Every macd_* column and MACD gate is MACD-V since
+# 2026-11-18 (user request): Spiroglou's volatility-normalised MACD (2022),
+# 100 * (EMA12 - EMA26) / ATR(26), so momentum is in units of the bar's own
+# volatility and reads the same across prices (+-50 ranging, +-150
+# overextended). Signal = EMA9 of MACD-V. ATR is Wilder's, as in the paper.
 MACD_FAST:   int = 12
 MACD_SLOW:   int = 26
 MACD_SIGNAL: int = 9
+MACD_ATR_PERIOD: int = 26
 
 # ROC
 ROC_PERIOD: int = 1   # 1-period rate of change on 10-sec candles
@@ -1027,7 +1032,7 @@ CRITERIA_ATTENTION: list[dict] = [
              "description": "last close > session VWAP",
              "required": True},
             {"name": "macd_positive",
-             "description": "MACD histogram > 0 (1-min)",
+             "description": "MACD-V histogram > 0 (1-min)",
              "required": True},
         ],
     },
@@ -1381,8 +1386,8 @@ SIM_WALL_REPLENISH_VETO:    float = -1.0  # fresh-seller veto (user 2026-08-14: 
                                           # parked. Asymmetric to the evidence read: never REQUIRED
                                           # (vacuous without depth/coverage), but a strongly
                                           # replenishing wall vetoes even a perfect tape.
-SIM_FIRST_MACD_CYCLE_ONLY:  bool  = True   # only trade the FIRST 1m MACD cycle of the move: once the 1m
-                                          # MACD histogram completes its first positive->negative flip on
+SIM_FIRST_MACD_CYCLE_ONLY:  bool  = True   # only trade the FIRST 1m MACD-V cycle of the move: once the 1m
+                                          # MACD-V histogram completes its first positive->negative flip on
                                           # CLOSED 1m bars since move start, ALL new entries (every setup
                                           # timeframe) are blocked — later legs are untouchable even if the
                                           # histogram turns positive again. Latched by DynamicScorer

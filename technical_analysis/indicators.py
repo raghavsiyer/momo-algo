@@ -19,7 +19,7 @@ Indicators computed per timeframe:
         ema_200, ma_50, ma_200
 
     Any timeframe:
-        macd_line, macd_signal, macd_hist  (1-min and 5-min per workflow)
+        macd_line, macd_signal, macd_hist  (MACD-V; 1-min and 5-min per workflow)
         roc                                (10-sec per workflow)
         rvol                               (5-min and daily)
 
@@ -37,7 +37,7 @@ from config import (
     EMA_9_PERIOD, EMA_20_PERIOD, EMA_50_PERIOD,
     EMA_200_PERIOD, MA_50_PERIOD, MA_200_PERIOD,
     BB_PERIOD, BB_STD,
-    MACD_FAST, MACD_SLOW, MACD_SIGNAL,
+    MACD_FAST, MACD_SLOW, MACD_SIGNAL, MACD_ATR_PERIOD,
     ROC_PERIOD,
     BARS_PER_SESSION_1MIN, BARS_PER_SESSION_5MIN,
 )
@@ -206,28 +206,62 @@ def add_bollinger_bands(
 
 
 # ---------------------------------------------------------------------------
-# MACD  (1-min and 5-min)
+# MACD-V  (1-min and 5-min) — volatility-normalised MACD
 # ---------------------------------------------------------------------------
+
+def _wilder_atr(df: pd.DataFrame, period: int) -> pd.Series:
+    """Wilder's ATR: true range smoothed with alpha = 1/period, seeded from the first bar.
+
+    True range is max(high - low, |high - prev close|, |low - prev close|); the
+    first bar has no previous close, so it is high - low. A frame without
+    high/low (close-only) falls back to |close - prev close|.
+    """
+    close = df["close"].astype(float)
+    high = df["high"].astype(float) if "high" in df.columns else close
+    low = df["low"].astype(float) if "low" in df.columns else close
+    prev_close = close.shift(1)
+    true_range = pd.concat(
+        [high - low, (high - prev_close).abs(), (low - prev_close).abs()], axis=1
+    ).max(axis=1)
+    return true_range.ewm(alpha=1.0 / period, adjust=False).mean()
+
+
+def _macd_v(
+    df: pd.DataFrame, fast: int, slow: int, signal: int, atr_period: int
+) -> tuple[pd.Series, pd.Series, pd.Series]:
+    """MACD-V line, signal and histogram (Spiroglou 2022).
+
+    MACD-V = 100 * (EMA(fast) - EMA(slow)) / ATR(atr_period), so momentum is in
+    units of the bar's own volatility and reads the same on a $0.50 and a $20
+    stock: +-50 is ranging, +-150 overextended. Signal = EMA(MACD-V, signal),
+    histogram = MACD-V - signal. ATR is 0 only when every bar so far is flat, when
+    the EMA spread is 0 too, so MACD-V is 0 there rather than 0/0.
+    """
+    close = df["close"].astype(float)
+    spread = close.ewm(span=fast, adjust=False).mean() - close.ewm(span=slow, adjust=False).mean()
+    atr = _wilder_atr(df, atr_period)
+    line = (100.0 * spread / atr.where(atr > 0)).fillna(0.0)
+    line_signal = line.ewm(span=signal, adjust=False).mean()
+    return line, line_signal, line - line_signal
+
 
 def add_macd(
     df: pd.DataFrame,
     fast: int = MACD_FAST,
     slow: int = MACD_SLOW,
     signal: int = MACD_SIGNAL,
+    atr_period: int = MACD_ATR_PERIOD,
 ) -> pd.DataFrame:
     """
-    Append macd_line, macd_signal, macd_hist columns.
-    macd_line   = EMA(fast) - EMA(slow)
+    Append macd_line, macd_signal, macd_hist columns, as MACD-V (user request,
+    2026-11-18; the column names stay so every consumer switched with them).
+    macd_line   = 100 * (EMA(fast) - EMA(slow)) / ATR(atr_period)
     macd_signal = EMA(macd_line, signal)
     macd_hist   = macd_line - macd_signal
     Positive hist = bullish momentum. Negative = bearish.
     """
     df = df.copy()
-    ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
-    ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
-    df["macd_line"]   = ema_fast - ema_slow
-    df["macd_signal"] = df["macd_line"].ewm(span=signal, adjust=False).mean()
-    df["macd_hist"]   = df["macd_line"] - df["macd_signal"]
+    df["macd_line"], df["macd_signal"], df["macd_hist"] = _macd_v(df, fast, slow, signal, atr_period)
     return df
 
 
@@ -434,13 +468,15 @@ def _add_bb_ip(df: pd.DataFrame, period: int = BB_PERIOD, std_dev: float = BB_ST
     df["bb_upper"] = mid + std_dev * std
     df["bb_lower"] = mid - std_dev * std
 
-def _add_macd_ip(df: pd.DataFrame, fast: int = MACD_FAST, slow: int = MACD_SLOW, signal: int = MACD_SIGNAL) -> None:
-    ema_fast = df["close"].ewm(span=fast, adjust=False).mean()
-    ema_slow = df["close"].ewm(span=slow, adjust=False).mean()
-    macd_line = ema_fast - ema_slow
-    df["macd_line"] = macd_line
-    df["macd_signal"] = macd_line.ewm(span=signal, adjust=False).mean()
-    df["macd_hist"] = df["macd_line"] - df["macd_signal"]
+def _add_macd_ip(
+    df: pd.DataFrame,
+    fast: int = MACD_FAST,
+    slow: int = MACD_SLOW,
+    signal: int = MACD_SIGNAL,
+    atr_period: int = MACD_ATR_PERIOD,
+) -> None:
+    """In-place MACD-V (see add_macd)."""
+    df["macd_line"], df["macd_signal"], df["macd_hist"] = _macd_v(df, fast, slow, signal, atr_period)
 
 def _add_roc_ip(df: pd.DataFrame, period: int = ROC_PERIOD) -> None:
     df["roc"] = df["close"].pct_change(periods=period) * 100

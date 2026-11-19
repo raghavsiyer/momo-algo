@@ -417,7 +417,7 @@ def _criteria_defs() -> dict:
             # Present only while enforced — entry_gate_states omits the gate
             # when SIM_FIRST_MACD_CYCLE_ONLY is off, and an always-on def
             # would render a permanently dead node.
-            *([{"name": "macd_cycle", "label": "First MACD cycle", "direction": "bool"}]
+            *([{"name": "macd_cycle", "label": "First MACD-V cycle", "direction": "bool"}]
               if SIM_FIRST_MACD_CYCLE_ONLY else []),
             {"name": "tape_speed", "label": "Tape speed", "threshold": SIM_PRESSURE_SPEED_MIN, "direction": ">=", "unit": "/s"},
             {"name": "tape_activity", "label": "Tape activity", "threshold": float(SIM_PRESSURE_ACTIVITY_MIN), "direction": ">="},

@@ -614,7 +614,7 @@ def entry_gate_states(
             detail = ""
         states.append(GateState(
             name="macd_cycle",
-            label="First MACD cycle",
+            label="First MACD-V cycle",
             passing=not cycle_done,
             value=None,
             threshold=None,
