@@ -8,6 +8,7 @@ branch.  No IB connection is required — the client is a stub.
 
 from __future__ import annotations
 
+import itertools
 import queue
 import threading
 from types import SimpleNamespace
@@ -141,7 +142,13 @@ def _run_ibkr_scanner_once(scan_results: list, *, queued=None, scorers=None,
     )
     queued = queued if queued is not None else set()
 
+    # Each poll reads the clock once; step it a second per read. The scripted
+    # polls run back to back, and on Windows time.monotonic() only moves every
+    # 15.6 ms, so with the real clock they'd all share one timestamp and no
+    # time would ever pass between them (a drop needs some to).
+    clock = itertools.count(1000.0, 1.0)
     with patch.object(scanners, "_print_scanner_hit") as mock_hit, \
+         patch.object(scanners._time, "monotonic", lambda: next(clock)), \
          patch("market_data.ibkr_rest.release_ib") as mock_release:
         t = threading.Thread(
             target=scanners._ibkr_scanner,
