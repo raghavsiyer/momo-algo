@@ -58,6 +58,17 @@ def _entry(**overrides):
     return e
 
 
+def _widen_band(monkeypatch, extension_pct):
+    """Raise the entry band's top (SIM_MAX_SETUP_EXTENSION_PCT) where it's read.
+
+    Call before building the tracker: it fixes its band top on set_entry_band.
+    """
+    import exec.order_flow
+    import exec.signals
+    for module in (config, exec.signals, exec.order_flow):
+        monkeypatch.setattr(module, "SIM_MAX_SETUP_EXTENSION_PCT", extension_pct)
+
+
 def _armed_tracker(prices, *, gap_ms=50, sells=0):
     """Tracker with the band set, fed a buy sequence (latches stamp in-band)."""
     t = OrderFlowTracker()
@@ -217,12 +228,17 @@ class TestArmedEntry:
         arm = next(s for s in states if s.name == "arm_evidence")
         assert not arm.passing and "ratio" in arm.detail
 
-    def test_extended_zone_requires_full_stack(self, armed_regime):
+    def test_extended_zone_requires_full_stack(self, armed_regime, monkeypatch):
         # Steady tape has no acceleration significance: the extended zone
         # falls back to the legacy instantaneous stack and refuses.
+        # The at-level zone and the band both end 5% above the level in
+        # config, so the extended zone only exists once the band is wider.
+        _widen_band(monkeypatch, 0.10)
+        price = round(LEVEL * (1 + config.SIM_LEVEL_CROSS_TOLERANCE_PCT) + 0.10, 4)
+        assert entry_zone(price, LEVEL) == ZONE_EXTENDED
         t, end = _armed_tracker([9.8] * 120)
-        t.on_timesale(_print(end + timedelta(milliseconds=50), 10.3))
-        sig, states = _parity(_entry(), t, 10.3)
+        t.on_timesale(_print(end + timedelta(milliseconds=50), price))
+        sig, states = _parity(_entry(), t, price)
         assert not sig.triggered
         names = {s.name for s in states}
         assert "tape_acceleration" in names and "arm_evidence" not in names
