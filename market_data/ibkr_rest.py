@@ -1063,6 +1063,40 @@ class IBKRHistoricalClient:
             end=end,
         )
 
+    # Interval -> IBKR barSizeSetting for get_candles_interval.
+    _INTERVAL_BAR_SIZE = {
+        "5min": "5 mins",
+        "15min": "15 mins",
+        "30min": "30 mins",
+        "1hour": "1 hour",
+        "1day": "1 day",
+        "1week": "1 week",
+        "1month": "1 month",
+    }
+
+    def get_candles_interval(
+        self, symbol: str, interval: str, lookback_days: int,
+    ) -> pd.DataFrame:
+        """OHLCV bars at *interval* covering the last *lookback_days*.
+
+        Extended hours (useRTH=False, like every fetch here) and split-
+        adjusted, as IBKR serves TRADES bars. The forming bar is included —
+        callers decide what counts as closed. Durations beyond a year switch
+        to "Y" units, which IBKR requires past 365 days. Unknown intervals
+        return an empty frame.
+        """
+        bar_size = self._INTERVAL_BAR_SIZE.get(interval)
+        if bar_size is None:
+            return pd.DataFrame()
+        days = max(1, int(lookback_days))
+        duration = f"{days} D" if days <= 365 else f"{int(math.ceil(days / 365))} Y"
+        return self._get_historical(
+            symbol,
+            duration=duration,
+            bar_size=bar_size,
+            interval_label=interval,
+        )
+
     def get_closed_dates(self, months_back: int = 2) -> frozenset:
         """Fetch closed market dates (holidays).
 

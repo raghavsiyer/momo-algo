@@ -682,6 +682,69 @@ class HistoricalClient:
             ))
         return self._to_df(candles)
 
+    # Interval -> /markets/history interval for get_candles_interval.
+    _HISTORY_INTERVAL = {"1day": "daily", "1week": "weekly", "1month": "monthly"}
+
+    def get_candles_interval(
+        self, symbol: str, interval: str, lookback_days: int,
+    ) -> pd.DataFrame:
+        """OHLCV bars at *interval* covering the last *lookback_days*.
+
+        5min/15min come from /markets/timesales (extended session), capped
+        at CANDLES_5MIN_FETCH_DAYS — the history Tradier keeps for them.
+        1day/1week/1month come from /markets/history, today included.
+        Tradier has no 30-minute or 1-hour bars: those return an empty frame
+        and the caller derives them from 15min.
+        """
+        if interval in ("5min", "15min"):
+            end = datetime.now(tz=timezone.utc)
+            days = max(1, min(int(lookback_days), CANDLES_5MIN_FETCH_DAYS))
+            try:
+                candles = self._get_timesales(symbol, interval, end - timedelta(days=days), end)
+            except TradierClientError:
+                return pd.DataFrame()
+            return self._to_df(candles)
+        history_interval = self._HISTORY_INTERVAL.get(interval)
+        if history_interval is None:
+            return pd.DataFrame()
+        end_day = MarketClock.now_et().date()
+        start_day = end_day - timedelta(days=max(1, int(lookback_days)))
+        try:
+            data = self._get(
+                "/markets/history",
+                params={
+                    "symbol": symbol,
+                    "interval": history_interval,
+                    "start": start_day.strftime("%Y-%m-%d"),
+                    "end": end_day.strftime("%Y-%m-%d"),
+                },
+            )
+        except TradierClientError:
+            return pd.DataFrame()
+        history = data.get("history") or {}
+        if not isinstance(history, dict):
+            return pd.DataFrame()
+        raw = history.get("day") or history.get("week") or history.get("month") or []
+        if isinstance(raw, dict):
+            raw = [raw]
+        candles = []
+        for item in raw:
+            try:
+                ts = datetime.strptime(item["date"], "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            except (KeyError, ValueError, TypeError):
+                continue
+            candles.append(OHLCVCandle(
+                symbol=symbol,
+                ts=ts,
+                open=float(item.get("open", 0) or 0),
+                high=float(item.get("high", 0) or 0),
+                low=float(item.get("low", 0) or 0),
+                close=float(item.get("close", 0) or 0),
+                volume=int(item.get("volume", 0) or 0),
+                interval=interval,
+            ))
+        return self._to_df(candles)
+
     def get_closed_dates(self, months_back: int = 2) -> frozenset:
         """Fetch closed market dates from Tradier calendar API.
 

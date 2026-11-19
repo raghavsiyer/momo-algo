@@ -13,7 +13,7 @@ import logging
 import re
 import time as _time
 import threading
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as FuturesTimeout
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import TYPE_CHECKING, Optional
@@ -32,6 +32,7 @@ from config import (
     CHANGE_PCT_MIN,
     ATTENTION_VOLUME_MIN,
     ATTENTION_RVOL_1DAY_MIN,
+    MA_LEVEL_FETCH_WAIT_SECS,
     _r, _y, _b, _dim,
 )
 from strategy.confidence_scorer import DynamicScorer
@@ -39,6 +40,7 @@ from chart_cache import load_candle_cache
 from technical_analysis.indicators import (
     build_1min, build_5min, build_daily,
 )
+from technical_analysis.moving_average_levels import bucket_bars, fetch_ma_frames
 from technical_analysis.patterns import detect_move_start, latest_extended_session_start
 from technical_analysis.resistance import ResistanceMap
 from market_data.provider import (
@@ -284,6 +286,108 @@ class EarlyStream:
         self.active = False
 
 
+# How long the MA worker waits for the pipeline to hand it the map before
+# giving up (the ticker was rejected, or the pipeline died after starting it).
+_MA_ATTACH_TIMEOUT_SECS = 120.0
+
+
+class _MovingAverageJob:
+    """Fetch the moving-average bars off the critical path, then mark them.
+
+    Started when the float gate passes (Stage 2 at the latest), so the
+    fetch overlaps news and sentiment. The worker fetches on its own single
+    thread — one provider connection, released before it waits — and, once
+    the pipeline hands it the map, marks the levels itself. The future
+    finishing therefore means the levels are on the map.
+    """
+
+    def __init__(self, client, symbol: str) -> None:
+        self._client = client
+        self._symbol = symbol
+        self._lock = threading.Lock()
+        self._future: Optional[Future] = None
+        self._ready = threading.Event()
+        self._rmap = None
+        self._last_price: Optional[float] = None
+
+    def start(self) -> Future:
+        with self._lock:
+            if self._future is None:
+                future: Future = Future()
+
+                def _target() -> None:
+                    if not future.set_running_or_notify_cancel():
+                        return
+                    try:
+                        future.set_result(self._run())
+                    except BaseException as exc:  # surfaced through the future
+                        future.set_exception(exc)
+
+                # A daemon thread, not an executor: executor workers are
+                # joined at interpreter exit, so a fetch in flight (or a
+                # worker waiting for its map) would hold up quitting.
+                threading.Thread(target=_target, name=f"ma-{self._symbol}", daemon=True).start()
+                self._future = future
+            return self._future
+
+    def attach(self, rmap, last_price: Optional[float]) -> None:
+        self._rmap = rmap
+        self._last_price = last_price
+        self._ready.set()
+
+    def abandon(self) -> None:
+        """Release a started worker without marking anything."""
+        self._rmap = None
+        self._ready.set()
+
+    def wait(self, timeout: float) -> Optional[int]:
+        """Levels marked, or None if the fetch is still running at *timeout*."""
+        future = self.start()
+        try:
+            return future.result(timeout=timeout)
+        except FuturesTimeout:
+            return None
+        except Exception as exc:
+            logger.debug(f"[{self._symbol}] MA level job failed: {exc}")
+            return 0
+
+    def _run(self) -> int:
+        try:
+            frames = fetch_ma_frames(self._client, self._symbol)
+        finally:
+            release_thread_connection()
+        if not frames:
+            return 0
+        if not self._ready.wait(timeout=_MA_ATTACH_TIMEOUT_SECS) or self._rmap is None:
+            return 0
+        return self._rmap.build_moving_averages(frames, last_price=self._last_price)
+
+
+def _mark_moving_averages(rmap, job: Optional[_MovingAverageJob], df_daily_fallback: pd.DataFrame,
+                          last_price: float, symbol: str) -> None:
+    """Mark MA levels: the daily ones from the Stage-2 daily frame at once,
+    then every timeframe from the MA fetch (waits up to
+    MA_LEVEL_FETCH_WAIT_SECS; a slower fetch marks its levels when it lands).
+    """
+    try:
+        if df_daily_fallback is not None and not df_daily_fallback.empty:
+            rmap.build_moving_averages(
+                {"daily": bucket_bars(df_daily_fallback, "daily", session_stamped=True)},
+                last_price=last_price,
+            )
+    except Exception as exc:
+        logger.debug(f"[{symbol}] daily MA fallback failed: {exc}")
+    if job is None:
+        return
+    job.attach(rmap, last_price)
+    marked = job.wait(MA_LEVEL_FETCH_WAIT_SECS)
+    if marked is None:
+        logger.info(
+            f"[{symbol}] MA levels still fetching after {MA_LEVEL_FETCH_WAIT_SECS:.0f}s — "
+            "they are marked when the fetch lands"
+        )
+
+
 @dataclass
 class PipelineResult:
     """Structured return from run_pipeline on success."""
@@ -292,7 +396,10 @@ class PipelineResult:
     scorer: Optional[object]    # DynamicScorer or None
     early_stream: EarlyStream   # live T&S candle buffer
     passed: bool = True         # False when force=True but stages failed
-    fail_reasons: list = field(default_factory=list)  # Stage 1/2 failure reasons   # live T&S candle buffer
+    fail_reasons: list = field(default_factory=list)  # Stage 1/2 failure reasons
+    # Finishes once the MA levels are on rmap (None without market data).
+    # Callers that persist rmap right away (backtest add) wait on it.
+    ma_levels: Optional[Future] = None
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +484,13 @@ def run_pipeline(
 
     # --- Early stream: T&S candle buffer started once float passes ---
     early_stream = EarlyStream()
+    # --- MA-level bars: fetched on their own thread once float passes ---
+    ma_job = _MovingAverageJob(tradier, symbol) if MARKET_DATA_ENABLED else None
+
+    def _on_float_pass() -> None:
+        early_stream.start(symbol)
+        if ma_job is not None:
+            ma_job.start()
 
     with ThreadPoolExecutor(max_workers=6) as pool:
         def _fetch_daily():
@@ -412,13 +526,15 @@ def run_pipeline(
 
         entry = evaluator.stage2(
             s1, df_daily=df_daily_pre if not df_daily_pre.empty else None,
-            on_float_pass=lambda: early_stream.start(symbol),
+            on_float_pass=_on_float_pass,
             yt_headlines=yt_headlines,
             skip_float_gate=force,
             cached_float=cached_float)
 
     if entry is None:
         early_stream.stop()
+        if ma_job is not None:
+            ma_job.abandon()
         if not force:
             if not quiet:
                 safe_print(f"  {_r('✗')}  {symbol} — {evaluator.last_fail_reason}")
@@ -434,6 +550,8 @@ def run_pipeline(
     from config import STATIC_CONFIDENCE_MIN
     if not force and entry.static_confidence < STATIC_CONFIDENCE_MIN:
         early_stream.stop()
+        if ma_job is not None:
+            ma_job.abandon()
         rmap_lite = ResistanceMap(symbol=symbol, current_price=entry.price)
         rmap_lite.build_static()
         if not quiet:
@@ -500,6 +618,8 @@ def run_pipeline(
 
         except TradierClientError as exc:
             early_stream.stop()
+            if ma_job is not None:
+                ma_job.abandon()
             if not quiet:
                 safe_print(f"  {_r('✗')}  {symbol} — rejected by Tradier ({exc})")
             return None
@@ -518,6 +638,8 @@ def run_pipeline(
             rmap.build_structure(df_daily, df_5min)
         except Exception as exc:
             logger.warning(f"[{symbol}] Resistance map error: {exc}")
+
+        _mark_moving_averages(rmap, ma_job, df_daily_pre, entry.price, symbol)
 
     # ------------------------------------------------------------------
     # Detect float gate failure (force mode only — gate was skipped)
@@ -569,4 +691,5 @@ def run_pipeline(
     return PipelineResult(
         entry=entry, rmap=rmap, scorer=scorer, early_stream=early_stream,
         passed=pipeline_passed, fail_reasons=fail_reasons,
+        ma_levels=ma_job.start() if ma_job is not None else None,
     )

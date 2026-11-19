@@ -5,13 +5,18 @@ Resistance level detection and management.
 
 LEVEL TYPES (enum LevelType):
     STATIC      — whole/half/quarter dollars, always present, computed from price
-    STRUCTURE   — historical pivots, 200 EMA, 200 MA, daily highs from candle data
+    STRUCTURE   — historical pivots, daily highs from candle data
     DYNAMIC     — topping tails and intraday highs added live as they form
     TRENDLINE   — descending resistance line through 2+ pivot highs (STUB — future)
+    MOVING_AVERAGE — config.MA_LEVEL_SPECS (200 EMA, 200 MA, 50 MA) on every
+                  config.MA_LEVEL_TIMEFRAMES chart (5m … monthly); one level
+                  per (kind, period, timeframe), moved in place as bars close
+                  (technical_analysis/moving_average_levels.py)
 
 STRENGTH WEIGHTS:
     200 EMA / 200 MA          0.95
     Daily pivot high          0.85
+    50 MA                     0.80
     Whole dollar              0.80
     5-min HOD pivot high      0.70
     Half dollar               0.65
@@ -46,6 +51,7 @@ USAGE:
 """
 
 import logging
+import threading
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum, auto
@@ -54,8 +60,16 @@ from typing import Optional
 import pandas as pd
 
 from config import (
+    MA_LEVEL_SPECS,
+    MA_LEVEL_TIMEFRAMES,
     RESISTANCE_BREAK_BUFFER,
     WHOLE_DOLLAR_BUFFER,
+)
+from technical_analysis.moving_average_levels import (
+    TimeframeMA,
+    bucket_key as _ma_bucket_key,
+    build_trackers as _build_ma_trackers,
+    ma_level_source,
 )
 from technical_analysis.patterns import (
     detect_topping_tail as _patterns_detect_topping_tail,
@@ -63,6 +77,11 @@ from technical_analysis.patterns import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Guards MA tracker/level mutation: the scorer advances MAs on every closed
+# 1m bar while a late MA fetch may attach from its own worker thread. Module
+# level, not per map, because maps are pickled and a Lock is not picklable.
+_MA_LOCK = threading.RLock()
 
 
 # ---------------------------------------------------------------------------
@@ -74,6 +93,9 @@ class LevelType(Enum):
     STRUCTURE = auto()    # pivots, 200 EMA/MA, daily high from candle history
     DYNAMIC   = auto()    # topping tails, intraday highs added from live stream
     TRENDLINE = auto()    # descending trendline through 2+ highs (future)
+    # Appended last so the values of the members above (pickled in the ticker
+    # cache) never shift.
+    MOVING_AVERAGE = auto()  # 200 EMA / 200 MA / 50 MA per chart timeframe
 
 
 # ---------------------------------------------------------------------------
@@ -83,6 +105,7 @@ class LevelType(Enum):
 STRENGTH = {
     "200_ema":          0.95,
     "200_ma":           0.95,
+    "50_ma":            0.80,
     "daily_pivot":      0.85,
     "whole_dollar":     0.80,
     "5min_pivot":       0.70,
@@ -119,6 +142,12 @@ class ResistanceLevel:
     _slope: Optional[float] = field(default=None, repr=False)
     _intercept: Optional[float] = field(default=None, repr=False)
     _anchor_ts: Optional[datetime] = field(default=None, repr=False)
+
+    # MOVING_AVERAGE identity (None on every other type). Plain defaults, so
+    # levels unpickled from before these fields existed read None.
+    timeframe: Optional[str] = None     # "5m" … "monthly"
+    ma_kind: Optional[str] = None       # "ema" | "sma"
+    ma_period: Optional[int] = None
 
     def projected_price(self, at: datetime) -> float:
         """
@@ -162,6 +191,9 @@ class ResistanceMap:
         self.symbol        = symbol.upper()
         self.current_price = current_price
         self._levels: list[ResistanceLevel] = []
+        # timeframe -> TimeframeMA; read via getattr everywhere because maps
+        # unpickled from before MA levels existed lack the attribute.
+        self._ma_trackers: dict[str, TimeframeMA] = {}
 
     # ------------------------------------------------------------------
     # TYPE 1 — Static price levels
@@ -323,32 +355,9 @@ class ResistanceMap:
                     min5_sources.pop(pivot_price, None)
             min5_pivots = eligible_min5_pivots
 
-        # --- Daily: 200 EMA and 200 MA ---
+        # Daily 200 EMA / 200 MA (and every other MA timeframe) are marked by
+        # build_moving_averages() as MOVING_AVERAGE levels, not here.
         if not df_daily.empty:
-            last_daily = df_daily.iloc[-1]
-
-            if "ema_200" in df_daily.columns:
-                ema_200_val = last_daily.get("ema_200")
-                if pd.notna(ema_200_val):
-                    self._add_or_merge(ResistanceLevel(
-                        price=round(float(ema_200_val), 2),
-                        level_type=LevelType.STRUCTURE,
-                        strength=STRENGTH["200_ema"],
-                        source="200 EMA (daily)",
-                        formed_at=now,
-                    ))
-
-            if "ma_200" in df_daily.columns:
-                ma_200_val = last_daily.get("ma_200")
-                if pd.notna(ma_200_val):
-                    self._add_or_merge(ResistanceLevel(
-                        price=round(float(ma_200_val), 2),
-                        level_type=LevelType.STRUCTURE,
-                        strength=STRENGTH["200_ma"],
-                        source="200 MA (daily)",
-                        formed_at=now,
-                    ))
-
             daily_pivots = self._find_pivot_highs(
                 df_daily,
                 n=3,
@@ -538,6 +547,106 @@ class ResistanceMap:
         )
         self._levels.append(level)
         return level
+
+    # ------------------------------------------------------------------
+    # TYPE 5 — Moving averages on every chart timeframe
+    # ------------------------------------------------------------------
+
+    def build_moving_averages(
+        self,
+        frames: dict[str, pd.DataFrame],
+        *,
+        now: Optional[datetime] = None,
+        last_price: Optional[float] = None,
+    ) -> int:
+        """Mark the MA levels for every timeframe in *frames*.
+
+        *frames* maps timeframe -> ``bucket_bars`` output (what
+        ``fetch_ma_frames`` returns). Timeframes already tracked and absent
+        from *frames* are kept, so a quick daily-only build can be topped up
+        by the full fetch later. Returns the number of MA levels now marked.
+        """
+        now = now or datetime.now(tz=timezone.utc)
+        wanted = {tf: df for tf, df in frames.items() if tf in MA_LEVEL_TIMEFRAMES}
+        trackers = _build_ma_trackers(wanted, now, last_price, MA_LEVEL_SPECS)
+        with _MA_LOCK:
+            merged = dict(getattr(self, "_ma_trackers", None) or {})
+            merged.update(trackers)
+            self._ma_trackers = merged
+            return self._sync_ma_levels(now)
+
+    def update_moving_averages(self, bar_ts: datetime, close: float) -> None:
+        """Advance every tracked timeframe with one closed 1-minute bar.
+
+        Called by the scorer on each 1m close; moves the MA levels in place.
+        A map without trackers (cached before MAs existed) is a no-op.
+        """
+        trackers = getattr(self, "_ma_trackers", None)
+        if not trackers or close is None or close <= 0:
+            return
+        with _MA_LOCK:
+            changed = False
+            for tf, ma in trackers.items():
+                changed |= ma.on_bar(_ma_bucket_key(tf, bar_ts), float(close))
+            if changed:
+                self._sync_ma_levels(bar_ts)
+
+    def moving_average_levels(self) -> list[ResistanceLevel]:
+        """All MA levels, sorted by price."""
+        return sorted(
+            (l for l in self._levels if l.level_type == LevelType.MOVING_AVERAGE),
+            key=lambda l: l.price,
+        )
+
+    def _sync_ma_levels(self, now: datetime) -> int:
+        """Create or move one level per (timeframe, kind, period) with a value.
+
+        MA levels never merge with other levels or each other — each moves
+        independently. Activity follows price on every sync (above the level
+        + break buffer = broken), because a moving level that price has
+        crossed back under is resistance again.
+        """
+        trackers: dict[str, TimeframeMA] = getattr(self, "_ma_trackers", None) or {}
+        by_source = {
+            l.source: l for l in self._levels if l.level_type == LevelType.MOVING_AVERAGE
+        }
+        price_now = float(self.current_price or 0.0)
+        marked = 0
+        for tf, ma in trackers.items():
+            for kind, period in ma.specs:
+                value = ma.value(kind, period)
+                if value is None or value <= 0:
+                    continue
+                price = round(value, 4) if value < 1.0 else round(value, 2)
+                active = not (price_now > 0 and price_now > price + RESISTANCE_BREAK_BUFFER)
+                source = ma_level_source(kind, period, tf)
+                level = by_source.get(source)
+                if level is None:
+                    strength_key = f"{period}_{'ema' if kind == 'ema' else 'ma'}"
+                    level = ResistanceLevel(
+                        price=price,
+                        level_type=LevelType.MOVING_AVERAGE,
+                        strength=STRENGTH.get(strength_key, 0.75),
+                        source=source,
+                        formed_at=now,
+                        active=active,
+                        timeframe=tf,
+                        ma_kind=kind,
+                        ma_period=period,
+                    )
+                    self._levels.append(level)
+                    by_source[source] = level
+                else:
+                    level.price = price
+                    level.active = active
+                marked += 1
+                by_source.pop(source, None)
+        # Whatever is left lost its value (e.g. a replaced tracker with less
+        # history): drop it rather than leave a stale price on the map.
+        if by_source:
+            stale = set(map(id, by_source.values()))
+            self._levels = [l for l in self._levels if id(l) not in stale]
+        return marked
 
     # ------------------------------------------------------------------
     # TYPE 4 — Descending trendline (STUB)
