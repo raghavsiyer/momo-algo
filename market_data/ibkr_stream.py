@@ -172,6 +172,25 @@ _TAPE_EVENT_MAXLEN = 8192
 _orig_tick_by_tick = None
 
 
+class _BankedPrint:
+    """A decoded tape print plus IBKR's own trade time.
+
+    ib_insync stamps every print with the TCP batch's arrival time and drops
+    the ``time`` field IBKR sends (whole Unix seconds of the trade). The merged
+    tape matches FINRA prints across feeds on that trade time, so it's kept
+    here. Attribute reads fall through to the print itself.
+    """
+
+    __slots__ = ("tick", "exchange_time")
+
+    def __init__(self, tick: object, exchange_time: Optional[int]) -> None:
+        self.tick = tick
+        self.exchange_time = exchange_time
+
+    def __getattr__(self, name: str):
+        return getattr(self.tick, name)
+
+
 def _tick_by_tick_all_last(
     self, reqId: int, tickType: int, time: int, price: float, size: float,
     tickAttribLast: object, exchange: str, specialConditions: str,
@@ -198,7 +217,11 @@ def _tick_by_tick_all_last(
         return
     buf = getattr(ticker, "_momo_tape_events", None)
     if buf is not None and ticker.tickByTicks:
-        buf.append(ticker.tickByTicks[-1])
+        try:
+            exchange_time = int(time) if time else None
+        except (TypeError, ValueError):
+            exchange_time = None
+        buf.append(_BankedPrint(ticker.tickByTicks[-1], exchange_time))
 
 
 def _patch_ib_insync_tape() -> None:
@@ -235,14 +258,21 @@ from config import (
     IBKR_DEPTH_IDLE_DOLLAR_RATE,
     IBKR_DEPTH_IDLE_RELEASE_SECS,
     IBKR_DEPTH_RELEASE_COOLDOWN_SECS,
+    TAPE_MODE,
+    TASTYTRADE_CREDENTIALS_PATH,
+    TASTYTRADE_TAPE_ENABLED,
 )
 from market_data.ibkr_rest import get_ib, release_ib, _make_contract
+from market_data.tape_merge import MergedTape
 from market_data.tradier_stream import (
     LiveQuote,
     LiveTimesale,
 )
 
 logger = logging.getLogger(__name__)
+
+# The merged tape's housekeeping (tape watch, Trade fallback, stats) runs this often.
+_TAPE_TICK_SECS = 1.0
 
 # "Max number of tick-by-tick requests has been reached" — arrives async,
 # never as a raised exception.
@@ -428,6 +458,12 @@ class IBKRSharedStream:
         self._vol_hist: dict[str, deque] = {}         # sym -> deque[(mono_ts, cum_vol)]
         self._last_vol_sample: float = 0.0
         self._last_ts_rebalance: float = 0.0
+        # Merged time & sales (market_data/tape_merge.py): built on the stream
+        # thread by _start_tape once IBKR is up, so tests that stub _run never
+        # open a tastytrade socket. None = IBKR's prints pass through as before.
+        self._tape: Optional[MergedTape] = None
+        self._tasty = None
+        self._last_tape_tick: float = 0.0
 
         self._cmd_q: queue.Queue = queue.Queue()
         self._thread = threading.Thread(
@@ -523,13 +559,66 @@ class IBKRSharedStream:
             ib.errorEvent += self._on_ib_error
         except Exception as exc:  # pragma: no cover - defensive
             logger.warning("IBKRSharedStream: could not hook errorEvent: %s", exc)
+        self._start_tape()
         try:
             self._loop(ib)
         finally:
+            self._stop_tape()
             # Whether we exited via "stop", an unhandled error, or the
             # _stopped flag, this thread owns an IB connection that IBKR only
             # reclaims when the socket closes.
             release_ib()
+
+    # ------------------------------------------------------------------
+    # Merged tape (tastytrade + IBKR)
+    # ------------------------------------------------------------------
+
+    def _start_tape(self) -> None:
+        """Bring up the merged tape and tastytrade's link, when configured.
+
+        Any problem (setting off, no credentials, bad mode) leaves _tape None,
+        so IBKR's prints pass through unchanged.
+        """
+        if not TASTYTRADE_TAPE_ENABLED:
+            logger.info("IBKRSharedStream: tastytrade tape off (TASTYTRADE_TAPE_ENABLED) — IBKR's tape only")
+            return
+        try:
+            from market_data.tastytrade_stream import DxLinkTapeLink, TastytradeApi
+            api = TastytradeApi(TASTYTRADE_CREDENTIALS_PATH)
+            tape = MergedTape(self._dispatch_print, TAPE_MODE)
+        except Exception as exc:
+            logger.warning("IBKRSharedStream: no tastytrade tape (%s) — IBKR's tape only", exc)
+            return
+        link = DxLinkTapeLink(api, tape.on_tastytrade_print, tape.on_tastytrade_trade,
+                              tape.set_tastytrade_live)
+        for symbol in list(self._contracts):
+            link.add(symbol)
+        self._tape = tape
+        self._tasty = link
+        link.start()
+        logger.info("IBKRSharedStream: %s tape (tastytrade + IBKR)", TAPE_MODE)
+
+    def _stop_tape(self) -> None:
+        link, self._tasty = self._tasty, None
+        if link is not None:
+            link.stop()
+        if self._tape is not None:
+            self._tape.on_ibkr_down()
+
+    def _dispatch_print(self, event: LiveTimesale) -> None:
+        """Hand one merged-tape print to the symbol's subscribers.
+
+        Runs on whichever feed's thread brought the print, with the tape's
+        per-symbol lock held, so a symbol's prints arrive one at a time and
+        in time order.
+        """
+        with self._lock:
+            cbs = dict(self._subs.get(event.symbol, {}))
+        for on_ts, _, _ in cbs.values():
+            try:
+                on_ts(event)
+            except Exception:
+                logger.exception("IBKRSharedStream: timesale callback failed for %s", event.symbol)
 
     def _loop(self, ib: object) -> None:
         while not self._stopped:
@@ -565,12 +654,30 @@ class IBKRSharedStream:
                 self._reap_denied_subs(ib)
 
             # --- dispatch tick-by-tick T&S ---
+            tape = self._tape
+            if tape is not None:
+                # Quotes first, so the merged tape judges this pass's prints
+                # against the newest NBBO (the second call below then finds
+                # nothing new).
+                self._dispatch_quotes()
+                now_mono = time.monotonic()
+                if now_mono - self._last_tape_tick >= _TAPE_TICK_SECS:
+                    self._last_tape_tick = now_mono
+                    tape.tick()
             for sym, ticker in list(self._ts_tickers.items()):
                 for tick in self._pending_tape_events(ticker):
-                    self._seq[sym] = self._seq.get(sym, 0) + 1
                     ts = tick.time or datetime.now(tz=timezone.utc)
                     if ts.tzinfo is None:
                         ts = ts.replace(tzinfo=timezone.utc)
+                    if tape is not None:
+                        # The merged tape decides what shows and dispatches it.
+                        tape.on_ibkr_print(
+                            sym, float(tick.price), float(tick.size),
+                            getattr(tick, "exchange_time", None),
+                            tick.exchange or "", tick.specialConditions or "", ts,
+                        )
+                        continue
+                    self._seq[sym] = self._seq.get(sym, 0) + 1
                     q_tkr = self._q_tickers.get(sym)
                     bid = _ns(q_tkr.bid) if q_tkr else 0.0
                     ask = _ns(q_tkr.ask) if q_tkr else 0.0
@@ -624,6 +731,11 @@ class IBKRSharedStream:
             self._prev_bid[sym] = bid
             self._prev_ask[sym] = ask
             self._prev_l1_last[sym] = last
+            tape = self._tape
+            if tape is not None:
+                # IBKR's quote is the NBBO the merged tape sides prints by
+                # (-1 / NaN on a side means no market there).
+                tape.on_ibkr_quote(sym, bid, ask)
             now = datetime.now(tz=timezone.utc)
             event = LiveQuote(
                 event_type="quote",
@@ -778,6 +890,9 @@ class IBKRSharedStream:
         except Exception as exc:
             logger.warning("IBKRSharedStream: subscribe %s failed: %s", symbol, exc)
             return
+        if self._tasty is not None:
+            # tastytrade's tape has no slot limit: every streamed symbol gets it.
+            self._tasty.add(symbol)
         self._start_ts(ib, symbol)
         with self._lock:
             wants_depth = any(
@@ -869,6 +984,9 @@ class IBKRSharedStream:
         self._ts_granted_at.pop(symbol, None)
         if symbol in self._ts_lru:
             self._ts_lru.remove(symbol)
+        if self._tape is not None:
+            # No IBKR tape line: tastytrade's tape carries the symbol alone.
+            self._tape.set_ibkr_tape(symbol, False)
         if ticker is None:
             return
         try:
@@ -1344,6 +1462,10 @@ class IBKRSharedStream:
         # immediately. _prune_request_state drops them once expired.
         self._pins.pop(symbol, None)
         self._vol_hist.pop(symbol, None)
+        if self._tasty is not None:
+            self._tasty.remove(symbol)
+        if self._tape is not None:
+            self._tape.forget(symbol)
         contract = self._contracts.pop(symbol, None)
         self._q_tickers.pop(symbol, None)
         self._prev_bid.pop(symbol, None)

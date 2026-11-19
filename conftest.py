@@ -16,3 +16,7 @@ os.environ["IBKR_ENABLED"] = "false"
 # Tests that need stream-enabled behavior must patch stream_enabled/flags
 # explicitly.
 os.environ["TRADIER_STREAM_ENABLED"] = "false"
+# Same again for the merged tape: a real ~/.scalpfeed/tastytrade.json on the
+# dev machine would otherwise let a test that runs the stream thread open a
+# live tastytrade DXLink socket. Tests drive the tape with fakes instead.
+os.environ["TASTYTRADE_TAPE_ENABLED"] = "false"

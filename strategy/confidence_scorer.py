@@ -710,6 +710,9 @@ class DynamicScorer:
                 cancel=False,
                 correction=False,
                 session=str(row.get("session") or ""),
+                # Merged-tape side as recorded live (None = classify from bid/ask).
+                aggressor=_cached_side(row.get("side")),
+                origin=str(row.get("origin") or ""),
             )
         except Exception:
             return None
@@ -4274,6 +4277,12 @@ class _EventHold:
         if self._active:
             self._scorer._release_held_events()
         return False
+
+
+def _cached_side(value) -> str | None:
+    """A cached print's merged-tape side, or None to classify from bid/ask."""
+    side = str(value or "").strip().lower()
+    return side if side in ("buy", "sell", "mid") else None
 
 
 def _spread_limit(price: float) -> float:

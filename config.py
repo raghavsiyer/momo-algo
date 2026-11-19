@@ -177,6 +177,23 @@ IBKR_L2_MAX_DEPTH_SUBS: int  = int(os.getenv("IBKR_L2_MAX_DEPTH_SUBS", "3"))
 IBKR_L2_VENUE_QUOTES: tuple[str, ...] = tuple(
     v.strip() for v in os.getenv("IBKR_L2_VENUE_QUOTES", "ARCA,NYSE,BEX").split(",") if v.strip()
 )
+# ---- Time & sales: tastytrade + IBKR, as the Quantower tape builds it ----
+# market_data/tape_merge.py ports ScalpFeedVendor's tape (~/.scalpfeed/project):
+# tastytrade's TimeAndSale (Nasdaq Last Sale: Nasdaq's markets + the
+# FINRA/Nasdaq TRF, exchange-stamped, first to arrive) merged with IBKR's
+# tick-by-tick (every venue, ~0.4 s late, 5 lines), each trade once, sides
+# from the NBBO. Modes, as the vendor's `tape` setting in ibkr.json:
+#   merged     both feeds, each trade once (the vendor's choice, 2026-11-06)
+#   tastytrade tastytrade's tape only
+#   ibkr       IBKR's where it holds a tape line, tastytrade's elsewhere
+# Needs IBKR_ENABLED. Without the credentials file (or with
+# TASTYTRADE_TAPE_ENABLED=false) IBKR's prints pass through unchanged, as before.
+TAPE_MODE: str = os.getenv("TAPE_MODE", "merged").strip().lower()
+TASTYTRADE_TAPE_ENABLED: bool = os.getenv("TASTYTRADE_TAPE_ENABLED", "true").lower() == "true"
+TASTYTRADE_CREDENTIALS_PATH: str = os.getenv(
+    "TASTYTRADE_CREDENTIALS_PATH",
+    os.path.join(os.path.expanduser("~"), ".scalpfeed", "tastytrade.json"),
+)
 # Max concurrent tick-by-tick (T&S tape) subscriptions. Measured at exactly 5
 # on this account (2026-08-04, tests/test_files/tick_subs_probe.py) — NOT the
 # depth-formula number (3) the IBKR docs suggest; the tape and depth quotas
