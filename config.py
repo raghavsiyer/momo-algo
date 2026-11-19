@@ -1347,6 +1347,11 @@ SIM_ANTICIPATION_MAX_PCT:   float = 0.06  # armed_band floor: max(pullback_low, 
                                           # still binds when shallower.
 SIM_LEVEL_CROSS_TOLERANCE_PCT: float = 0.05  # "at the level" zone = [level, level*(1+this)] — the
                                           # break itself. Above it counts as extended.
+                                          # Kept at 5% (2026-11-18), equal to SIM_MAX_SETUP_EXTENSION_PCT,
+                                          # so the band ends where this zone does: the extended zone
+                                          # (full-stack entries) and the posterior regime's zone cap
+                                          # never apply. They come back into play only if this drops
+                                          # below the band's top; their tests widen the band to cover them.
 SIM_ARM_EVIDENCE_TTL_SECS:  float = 10.0  # NORMAL arm: every evidence gate must have been true within
                                           # this many seconds while price was in the band.
 SIM_ARM_STRONG_TTL_SECS:    float = 5.0   # STRONG arm (required below the level): tighter recency.

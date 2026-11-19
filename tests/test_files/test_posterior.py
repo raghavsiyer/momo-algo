@@ -217,6 +217,13 @@ class TestPosteriorRegime:
 
     def test_zone_cap_blocks_above_cross_tolerance(self, posterior_regime, monkeypatch):
         monkeypatch.setattr(config, "SIM_POSTERIOR_THRESHOLD", 1e-6)
+        # The scored zone and the band both end 5% above the level in config,
+        # so a price can only be in the band but past the zone when the band is
+        # wider. Widen it where it's read, before the tracker fixes its top.
+        import exec.order_flow
+        import exec.signals
+        for module in (config, exec.signals, exec.order_flow):
+            monkeypatch.setattr(module, "SIM_MAX_SETUP_EXTENSION_PCT", 0.10)
         t, _ = _fed_tracker([round(9.80 + i * 0.002, 4) for i in range(100)])
         price = LEVEL * (1.0 + config.SIM_LEVEL_CROSS_TOLERANCE_PCT) + 0.02
         sig, states = _parity(_entry(), t, price)

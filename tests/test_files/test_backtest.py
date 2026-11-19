@@ -33,9 +33,14 @@ def _et_ts(day: date, hour: int, minute: int = 0) -> float:
 
 
 def test_backtest_default_window_uses_configured_premarket_window(tmp_path):
-    runner = BacktestRunner(cache_path=tmp_path / "ticker_cache.pkl", eval_stats_path=tmp_path / "missing.log")
+    # no_api: only the window is under test, so no Tradier key is needed.
+    runner = BacktestRunner(
+        cache_path=tmp_path / "ticker_cache.pkl", eval_stats_path=tmp_path / "missing.log", no_api=True,
+    )
     start_utc, end_utc = runner._window_bounds_utc(date(2026, 6, 10))
-    local_tz = MarketClock.local_tz()
+    # The window's own zone, not MarketClock.local_tz(): that's today's fixed
+    # UTC offset, an hour off for a June date whenever today is in winter time.
+    local_tz = MarketClock.PREMARKET_WINDOW_TZ
     start_local = start_utc.astimezone(local_tz)
     end_local = end_utc.astimezone(local_tz)
 
